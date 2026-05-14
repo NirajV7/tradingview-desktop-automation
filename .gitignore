@@ -1,4 +1,8 @@
 venv/
 __pycache__/
-*.pyc
+*.csv
 .DS_Store
+*.pyc
+.env
+fyers_token.json
+fyersApi.log

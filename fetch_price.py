@@ -3,6 +3,9 @@ import websocket
 import json
 import time
 import random
+import csv
+import os
+from datetime import datetime
 
 def fetch_all_tv_prices():
     try:
@@ -77,26 +80,69 @@ def fetch_all_tv_prices():
             resp = send("Runtime.evaluate", {"expression": js_code, "returnByValue": True})
             ws.close()
             
-            data = json.loads(resp["result"]["result"]["value"])
-            data["tab_title"] = tab.get("title", "No Title")
-            results.append(data)
+            data_val = resp.get("result", {}).get("result", {}).get("value")
+            if data_val:
+                data = json.loads(data_val)
+                data["tab_title"] = tab.get("title", "No Title")
+                results.append(data)
         except Exception as e:
             results.append({"error": str(e), "tab": tab.get("title")})
 
     return results
+
+def log_to_csv(data, filename="trading_log.csv"):
+    if not isinstance(data, list) or not data:
+        return
+    
+    file_exists = os.path.isfile(filename)
+    
+    # Flatten data for CSV
+    rows = []
+    all_fields = set(['timestamp', 'symbol', 'price', 'timeframe'])
+    
+    for entry in data:
+        if "error" in entry: continue
+        row = {
+            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            'symbol': entry.get('symbol'),
+            'price': entry.get('price'),
+            'timeframe': entry.get('timeframe'),
+        }
+        # Add indicators
+        indicators = entry.get('indicators', {})
+        for name, val in indicators.items():
+            row[f"ind_{name}"] = val
+            all_fields.add(f"ind_{name}")
+        rows.append(row)
+
+    if not rows: return
+
+    # Determine fieldnames (existing header + new indicators)
+    fieldnames = sorted(list(all_fields))
+    
+    with open(filename, mode='a', newline='') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        if not file_exists:
+            writer.writeheader()
+        for r in rows:
+            for field in fieldnames:
+                if field not in r: r[field] = None
+            writer.writerow(r)
+    print(f"✅ Logged {len(rows)} entries to {filename}")
 
 if __name__ == "__main__":
     print("Fetching everything from all open tabs...")
     data = fetch_all_tv_prices()
     if isinstance(data, list):
         for entry in data:
+            if "error" in entry:
+                print(f"❌ Error in tab '{entry.get('tab')}': {entry['error']}")
+                continue
             symbol = entry.get('symbol', '???')
             price = entry.get('price', '???')
             timeframe = entry.get('timeframe', '???')
-            tab = entry.get('tab_title', '???')
-            print(f"\n- {symbol} ({timeframe}) [Price: {price}] [Tab: {tab}]")
-            indicators = entry.get('indicators', {})
-            for name, val in indicators.items():
-                print(f"  > {name}: {val}")
+            print(f"- {symbol} ({timeframe}) [Price: {price}]")
+        
+        log_to_csv(data)
     else:
         print(data)
