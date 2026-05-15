@@ -94,8 +94,6 @@ def log_to_csv(data, filename="trading_log.csv"):
     if not isinstance(data, list) or not data:
         return
     
-    file_exists = os.path.isfile(filename)
-    
     # Flatten data for CSV
     rows = []
     all_fields = set(['timestamp', 'symbol', 'price', 'timeframe'])
@@ -120,9 +118,12 @@ def log_to_csv(data, filename="trading_log.csv"):
     # Determine fieldnames (existing header + new indicators)
     fieldnames = sorted(list(all_fields))
     
+    # DYNAMIC CHECK: Does file need headers?
+    file_needs_header = not os.path.exists(filename) or os.stat(filename).st_size == 0
+    
     with open(filename, mode='a', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
-        if not file_exists:
+        if file_needs_header:
             writer.writeheader()
         for r in rows:
             for field in fieldnames:
@@ -131,18 +132,41 @@ def log_to_csv(data, filename="trading_log.csv"):
     print(f"✅ Logged {len(rows)} entries to {filename}")
 
 if __name__ == "__main__":
-    print("Fetching everything from all open tabs...")
-    data = fetch_all_tv_prices()
-    if isinstance(data, list):
-        for entry in data:
-            if "error" in entry:
-                print(f"❌ Error in tab '{entry.get('tab')}': {entry['error']}")
-                continue
-            symbol = entry.get('symbol', '???')
-            price = entry.get('price', '???')
-            timeframe = entry.get('timeframe', '???')
-            print(f"- {symbol} ({timeframe}) [Price: {price}]")
-        
-        log_to_csv(data)
-    else:
-        print(data)
+    WATCHLIST_FILE = "watchlist.json"
+    watchlist = []
+    if os.path.exists(WATCHLIST_FILE):
+        with open(WATCHLIST_FILE, "r") as f:
+            watchlist = json.load(f)
+            # Remove prefixes/suffixes for matching TV tab titles or symbol names
+            watchlist_clean = [s.split(":")[1].split("-")[0] if ":" in s else s for s in watchlist]
+
+    # Loop Forever
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 TV Price Engine Started. Polling every 5s...")
+    while True:
+        try:
+            watchlist = []
+            if os.path.exists(WATCHLIST_FILE):
+                with open(WATCHLIST_FILE, "r") as f:
+                    watchlist = json.load(f)
+            
+            watchlist_clean = [s.split(":")[1].split("-")[0] if ":" in s else s for s in watchlist]
+
+            data = fetch_all_tv_prices()
+            if isinstance(data, list):
+                found_symbols = []
+                for entry in data:
+                    if "error" in entry: continue
+                    symbol = entry.get('symbol', '???')
+                    found_symbols.append(symbol)
+                    price = entry.get('price', '???')
+                    timeframe = entry.get('timeframe', '???')
+                
+                log_to_csv(data)
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ Logged {len(found_symbols)} TV entries.", flush=True)
+            else:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ TV Error: {data}", flush=True)
+            
+        except Exception as e:
+            print(f"Loop Error: {e}")
+            
+        time.sleep(5)

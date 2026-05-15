@@ -14,7 +14,13 @@ REDIRECT_URL = os.getenv("FYERS_REDIRECT_URL")
 
 TOKEN_FILE = "fyers_token.json"
 LOG_FILE = "fyers_official_log.csv"
-SYMBOLS = ["NSE:RELIANCE-EQ", "NSE:TTKPRESTIG-EQ"]
+WATCHLIST_FILE = "watchlist.json"
+
+def get_symbols():
+    if os.path.exists(WATCHLIST_FILE):
+        with open(WATCHLIST_FILE, "r") as f:
+            return json.load(f)
+    return ["NSE:RELIANCE-EQ"] # Fallback
 
 # Memory to store last known values when market is closed
 last_known_data = {}
@@ -57,7 +63,7 @@ def get_access_token(auth_code=None):
         response_type="code",
         grant_type="authorization_code"
     )
-    return session.generate_auth_url()
+    return session.generate_authcode()
 
 def log_to_csv(data):
     file_exists = os.path.isfile(LOG_FILE)
@@ -96,11 +102,14 @@ def log_to_csv(data):
         })
         
     if not rows: return
-
+    
     fieldnames = ['timestamp', 'symbol', 'last_price', 'volume', 'buy_qty', 'sell_qty', 'total_buy_qty', 'total_sell_qty']
+    # DYNAMIC CHECK: Does file need headers?
+    file_needs_header = not os.path.exists(LOG_FILE) or os.stat(LOG_FILE).st_size == 0
+    
     with open(LOG_FILE, mode='a', newline='') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
-        if not file_exists:
+        if file_needs_header:
             writer.writeheader()
         writer.writerows(rows)
     print(f"✅ Logged {len(rows)} entries (Last Known State preserved).")
@@ -110,17 +119,21 @@ def main():
     if not access_token: return
 
     fyers = fyersModel.FyersModel(client_id=CLIENT_ID, token=access_token, log_path=os.getcwd())
-    print(f"🚀 Fyers Logger started. Monitoring {SYMBOLS} every 1 minute...")
+    symbols = get_symbols()
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 Fyers Logger started. Every 1m...")
 
     while True:
         try:
-            response = fyers.quotes({"symbols": ",".join(SYMBOLS)})
+            # Refresh symbols list every loop to allow on-the-fly changes
+            symbols = get_symbols()
+            response = fyers.quotes({"symbols": ",".join(symbols)})
             if response.get('s') == 'ok':
                 log_to_csv(response)
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ Fyers Logged {len(symbols)} symbols.", flush=True)
             else:
-                print(f"⚠️  Fyers API Error: {response}")
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ Fyers API Error: {response}", flush=True)
         except Exception as e:
-            print(f"❌ Error: {e}")
+            print(f"[{datetime.now().strftime('%H:%M:%S')}] ❌ Fyers Error: {e}", flush=True)
         time.sleep(60)
 
 if __name__ == "__main__":
