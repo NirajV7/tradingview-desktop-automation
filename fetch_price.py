@@ -47,6 +47,12 @@ def fetch_all_tv_prices():
                 const studies = model.allStudies ? model.allStudies() : [];
                 for (let s of studies) {
                     const desc = s.metaInfo().description;
+                    
+                    // Skip static corporate events/noise to save log bandwidth
+                    if (desc === "Dividends" || desc === "Earnings" || desc.toLowerCase().includes("dividend") || desc.toLowerCase().includes("earning")) {
+                        continue;
+                    }
+                    
                     const sData = s.data();
                     const items = sData._items || (sData.m_bars ? sData.m_bars._items : null);
                     
@@ -55,9 +61,32 @@ def fetch_all_tv_prices():
                         if (val !== undefined) {
                             val = round(val);
                             let name = desc;
+                            
+                            // Try to extract active parameter length (e.g. Moving Average Exponential(8))
+                            try {
+                                if (s.properties && s.properties().inputs) {
+                                    const inputs = s.properties().inputs;
+                                    let lenVal = null;
+                                    if (inputs.length) {
+                                        lenVal = inputs.length.value();
+                                    } else {
+                                        for (let key in inputs) {
+                                            if (key.toLowerCase().includes("length") || key.toLowerCase().includes("period")) {
+                                                lenVal = inputs[key].value ? inputs[key].value() : inputs[key];
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if (lenVal !== null && lenVal !== undefined) {
+                                        name = desc + "(" + lenVal + ")";
+                                    }
+                                }
+                            } catch(e) {}
+                            
+                            let uniqName = name;
                             let i = 1;
-                            while (res.indicators[name]) { name = desc + " " + (++i); }
-                            res.indicators[name] = val;
+                            while (res.indicators[uniqName]) { uniqName = name + " " + (++i); }
+                            res.indicators[uniqName] = val;
                         }
                     }
                 }

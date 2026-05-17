@@ -141,15 +141,30 @@ def generate_telemetry():
             print(f"| **{base}** | [ No ticks logged ] | - | - | - | - |")
 
     def print_tv_table(data_dict, base, limit=10, include_tf=False):
+        def find_indicator_value(row, keyword, fallback_key=None):
+            # 1. Direct match on key containing the clean keyword (case-insensitive)
+            for col_key, val in row.items():
+                if keyword.lower() in col_key.lower() and val is not None and val != "":
+                    return val
+            # 2. Direct exact fallback match
+            if fallback_key and fallback_key in row and row[fallback_key] is not None and row[fallback_key] != "":
+                return row[fallback_key]
+            # 3. Fuzzy match on fallback key
+            if fallback_key:
+                for col_key, val in row.items():
+                    if fallback_key.lower() in col_key.lower() and val is not None and val != "":
+                        return val
+            return "..."
+
         logs = data_dict.get(base, [])
         logs = sorted(logs, key=lambda x: x.get("timestamp", ""))
         if logs:
             for row in logs[-limit:]:
                 price = row.get("price", "...")
-                vwap = row.get("ind_Volume Weighted Average Price", row.get("ind_VWAP", "..."))
-                ema8 = row.get("ind_Moving Average Exponential", "...")
-                ema21 = row.get("ind_Moving Average Exponential 2", "...")
-                rsi = row.get("ind_Relative Strength Index", "...")
+                vwap = find_indicator_value(row, "VWAP", "ind_Volume Weighted Average Price")
+                ema8 = find_indicator_value(row, "Exponential(8)", "ind_Moving Average Exponential")
+                ema21 = find_indicator_value(row, "Exponential(21)", "ind_Moving Average Exponential 2")
+                rsi = find_indicator_value(row, "RSI", "ind_Relative Strength Index")
                 ts = row.get("timestamp", "...").split(" ")[-1]
                 
                 # Check for timeframe field
