@@ -134,6 +134,8 @@ body {
  * CARD AND GLASSMORPHISM AESTHETICS
  * ------------------------------------------------------------- */
 .card {
+    position: relative;
+    z-index: 1;
     background: var(--bg-surface);
     border: 1px solid var(--border-color);
     border-radius: 20px;
@@ -643,4 +645,10 @@ input[type="text"]:focus {
     flex-direction: column;
     align-items: center;
     gap: 12px;
+}
+
+/* Elevate search card stacking context to allow dropdown to overlay siblings cleanly */
+.search-card {
+    position: relative;
+    z-index: 100;
 }
