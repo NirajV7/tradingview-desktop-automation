@@ -1,140 +1,139 @@
 import os
-import time
-import json
 import csv
+import json
+import time
+import threading
 from datetime import datetime
 from fyers_apiv3 import fyersModel
+from fyers_apiv3.FyersWebsocket import data_ws
 from dotenv import load_dotenv
 
-# Load credentials
+# Load environment variables
 load_dotenv()
+
 CLIENT_ID = os.getenv("FYERS_CLIENT_ID")
 SECRET_KEY = os.getenv("FYERS_SECRET_KEY")
 REDIRECT_URL = os.getenv("FYERS_REDIRECT_URL")
-
 TOKEN_FILE = "fyers_token.json"
-LOG_FILE = "fyers_official_log.csv"
 WATCHLIST_FILE = "watchlist.json"
+LOG_FILE = "fyers_official_log.csv"
+
+# Global state to store the latest data for each symbol
+data_store = {}
+store_lock = threading.Lock()
 
 def get_symbols():
     if os.path.exists(WATCHLIST_FILE):
         with open(WATCHLIST_FILE, "r") as f:
             return json.load(f)
-    return ["NSE:RELIANCE-EQ"] # Fallback
+    return []
 
-# Memory to store last known values when market is closed
-last_known_data = {}
-
-def get_access_token(auth_code=None):
-    # 1. Check if token already exists for today
+def get_access_token():
     if os.path.exists(TOKEN_FILE):
         with open(TOKEN_FILE, "r") as f:
-            token_data = json.load(f)
-            if token_data.get("date") == datetime.now().strftime("%Y-%m-%d"):
-                return token_data.get("access_token")
+            data = json.load(f)
+            return data.get("access_token")
+    return None
 
-    # 2. If we have a new auth_code from the dashboard, use it
-    if auth_code:
-        session = fyersModel.SessionModel(
-            client_id=CLIENT_ID,
-            secret_key=SECRET_KEY,
-            redirect_uri=REDIRECT_URL,
-            response_type="code",
-            grant_type="authorization_code"
-        )
-        session.set_token(auth_code)
-        response = session.generate_access_token()
-        
-        if response.get("s") == "ok":
-            access_token = response.get("access_token")
-            with open(TOKEN_FILE, "w") as f:
-                json.dump({"access_token": access_token, "date": datetime.now().strftime("%Y-%m-%d")}, f)
-            print("✅ New token generated and saved.")
-            return access_token
-        else:
-            print(f"❌ Error generating token: {response}")
-            return None
-
-    # 3. Otherwise, return the URL for the dashboard to show
-    session = fyersModel.SessionModel(
-        client_id=CLIENT_ID,
-        secret_key=SECRET_KEY,
-        redirect_uri=REDIRECT_URL,
-        response_type="code",
-        grant_type="authorization_code"
-    )
-    return session.generate_authcode()
-
-def log_to_csv(data):
-    file_exists = os.path.isfile(LOG_FILE)
-    rows = []
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
-    for item in data.get('d', []):
-        symbol = item.get('n')
-        v = item.get('v', {})
-        
-        # Logic: If field is missing (market closed), use the last known value
-        if symbol not in last_known_data:
-            last_known_data[symbol] = {'bq': 0, 'sq': 0, 'tbq': 0, 'tsq': 0, 'lp': 0, 'vol': 0}
-        
-        # Update only if new data exists
-        curr = last_known_data[symbol]
-        lp = v.get('lp', curr['lp'])
-        vol = v.get('volume', curr['vol'])
-        bq = v.get('bq', curr['bq'])
-        sq = v.get('sq', curr['sq'])
-        tbq = v.get('total_buy_qty', curr['tbq'])
-        tsq = v.get('total_sell_qty', curr['tsq'])
-        
-        # Store back in memory
-        last_known_data[symbol] = {'lp': lp, 'vol': vol, 'bq': bq, 'sq': sq, 'tbq': tbq, 'tsq': tsq}
-
-        rows.append({
-            'timestamp': ts,
-            'symbol': symbol,
-            'last_price': lp,
-            'volume': vol,
-            'buy_qty': bq,
-            'sell_qty': sq,
-            'total_buy_qty': tbq,
-            'total_sell_qty': tsq
-        })
-        
-    if not rows: return
-    
+def log_to_csv():
+    """Background thread to write the current data_store to CSV every 2 seconds"""
+    print("📊 CSV Logging Thread Started...")
     fieldnames = ['timestamp', 'symbol', 'last_price', 'volume', 'buy_qty', 'sell_qty', 'total_buy_qty', 'total_sell_qty']
-    # DYNAMIC CHECK: Does file need headers?
-    file_needs_header = not os.path.exists(LOG_FILE) or os.stat(LOG_FILE).st_size == 0
     
-    with open(LOG_FILE, mode='a', newline='') as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        if file_needs_header:
-            writer.writeheader()
-        writer.writerows(rows)
-    print(f"✅ Logged {len(rows)} entries (Last Known State preserved).")
-
-def main():
-    access_token = get_access_token()
-    if not access_token: return
-
-    fyers = fyersModel.FyersModel(client_id=CLIENT_ID, token=access_token, log_path=os.getcwd())
-    symbols = get_symbols()
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 Fyers Logger started. Every 1m...")
-
     while True:
         try:
-            # Refresh symbols list every loop to allow on-the-fly changes
-            symbols = get_symbols()
-            response = fyers.quotes({"symbols": ",".join(symbols)})
-            if response.get('s') == 'ok':
-                log_to_csv(response)
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ Fyers Logged {len(symbols)} symbols.", flush=True)
-            else:
-                print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ Fyers API Error: {response}", flush=True)
+            with store_lock:
+                current_snapshot = list(data_store.values())
+            
+            if current_snapshot:
+                file_needs_header = not os.path.exists(LOG_FILE) or os.stat(LOG_FILE).st_size == 0
+                ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                with open(LOG_FILE, mode='a', newline='') as f:
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    if file_needs_header:
+                        writer.writeheader()
+                    for row in current_snapshot:
+                        row['timestamp'] = ts
+                        writer.writerow(row)
+                # print(f"✅ Snapshotted {len(current_snapshot)} symbols to CSV.")
         except Exception as e:
-            print(f"[{datetime.now().strftime('%H:%M:%S')}] ❌ Fyers Error: {e}", flush=True)
-        time.sleep(60)
+            print(f"Logging Error: {e}")
+        
+        time.sleep(5) # Pulse rate for CSV writing (every 5 seconds)
+
+def on_message(message):
+    """Handles incoming WebSocket messages (Both Symbol and Depth updates)"""
+    symbol = message.get('symbol')
+    if not symbol: return
+
+    with store_lock:
+        if symbol not in data_store:
+            data_store[symbol] = {
+                'symbol': symbol, 'last_price': 0, 'volume': 0, 
+                'buy_qty': 0, 'sell_qty': 0, 'total_buy_qty': 0, 'total_sell_qty': 0
+            }
+        
+        # Update Price and Volume from 'sf' (Symbol Full) or '7208' messages
+        if 'ltp' in message:
+            data_store[symbol]['last_price'] = message['ltp']
+        if 'vol_traded_today' in message:
+            data_store[symbol]['volume'] = message['vol_traded_today']
+        elif 'v' in message:
+            data_store[symbol]['volume'] = message['v']
+
+        # Update Depth from 'dp' (Depth) messages
+        if 'bid_size1' in message:
+            data_store[symbol]['buy_qty'] = message['bid_size1']
+        if 'ask_size1' in message:
+            data_store[symbol]['sell_qty'] = message['ask_size1']
+        
+        # Total Buy/Sell if available
+        # Note: WebSocket 'dp' usually doesn't have totals, but some modes do.
+        # We will use best bid/ask size as the primary liquidity indicators.
+
+def onerror(message):
+    print(f"❌ WebSocket Error: {message}")
+
+def onclose(message):
+    print(f"🔌 WebSocket Closed: {message}")
+
+def onopen():
+    print("🌐 WebSocket Connection Established. Subscribing...")
+    symbols = get_symbols()
+    
+    # Subscribe to BOTH Depth and Full Symbol Data
+    # 1. Full Symbol Data (for LTP, Volume)
+    fyers_ws.subscribe(symbols=symbols, data_type="SymbolUpdate")
+    # 2. Depth Data (for Buy/Sell Quantities)
+    fyers_ws.subscribe(symbols=symbols, data_type="DepthUpdate")
+    
+    print(f"✅ Subscribed to {len(symbols)} symbols for Depth + Price.")
+    fyers_ws.keep_running()
 
 if __name__ == "__main__":
-    main()
+    access_token = get_access_token()
+    if not access_token:
+        print("❌ No access token found. Please authorize via dashboard.")
+        exit()
+
+    # Create the WebSocket instance
+    # Fyers expects token in format "appid:accesstoken"
+    full_token = f"{CLIENT_ID}:{access_token}"
+    
+    fyers_ws = data_ws.FyersDataSocket(
+        access_token=full_token,
+        log_path=os.getcwd(),
+        litemode=False,
+        reconnect=True,
+        on_connect=onopen,
+        on_close=onclose,
+        on_error=onerror,
+        on_message=on_message
+    )
+
+    # Start the background CSV logger
+    threading.Thread(target=log_to_csv, daemon=True).start()
+
+    # Connect to the stream
+    fyers_ws.connect()

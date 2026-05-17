@@ -141,7 +141,7 @@ if __name__ == "__main__":
             watchlist_clean = [s.split(":")[1].split("-")[0] if ":" in s else s for s in watchlist]
 
     # Loop Forever
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 TV Price Engine Started. Polling every 5s...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 TV Price Engine Started. Polling every 180s...")
     while True:
         try:
             watchlist = []
@@ -169,4 +169,4 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Loop Error: {e}")
             
-        time.sleep(5)
+        time.sleep(15)
