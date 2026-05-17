@@ -18,8 +18,21 @@ def check_auth():
         with open(TOKEN_FILE, "r") as f:
             try:
                 token_data = json.load(f)
-                # 1. Check Date
-                if token_data.get("date") != datetime.now().strftime("%Y-%m-%d"):
+                # 1. Check Date (Allow midnight rollovers before the 6:00 AM daily reset)
+                token_date_str = token_data.get("date")
+                if token_date_str:
+                    try:
+                        # Convert cached date string to date object
+                        from datetime import datetime as dt
+                        token_date = dt.strptime(token_date_str, "%Y-%m-%d").date()
+                        today = datetime.now().date()
+                        # Force daily refresh only if we crossed into a new day AND it is past 6:00 AM IST
+                        if token_date != today and datetime.now().hour >= 6:
+                            return True, get_new_url()
+                    except Exception as e:
+                        print(f"Date check fallback: {e}")
+                        return True, get_new_url()
+                else:
                     return True, get_new_url()
                 
                 # 2. Check JWT Expiry
