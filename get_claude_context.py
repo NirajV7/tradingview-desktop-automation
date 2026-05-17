@@ -156,6 +156,41 @@ def generate_telemetry():
                         return val
             return "..."
 
+        def evaluate_trend_state(price, vwap, ema20, ema50, ema200, rsi):
+            try:
+                p = float(price)
+                v = float(vwap)
+                e20 = float(ema20)
+                e50 = float(ema50)
+                e200 = float(ema200)
+                r = float(rsi)
+                
+                # Bullish conditions
+                is_bull_baseline = p > v
+                is_bull_structure = e20 > e50
+                is_bull_anchor = p > e200
+                is_bull_momentum = r > 50
+                
+                # Bearish conditions
+                is_bear_baseline = p < v
+                is_bear_structure = e20 < e50
+                is_bear_anchor = p < e200
+                is_bear_momentum = r < 50
+                
+                if is_bull_baseline and is_bull_structure and is_bull_anchor and is_bull_momentum:
+                    if r > 70:
+                        return "⚠️ OVERBOUGHT"
+                    return "🟢 BULLISH"
+                    
+                if is_bear_baseline and is_bear_structure and is_bear_anchor and is_bear_momentum:
+                    if r < 30:
+                        return "⚠️ OVERSOLD"
+                    return "🔴 BEARISH"
+                    
+                return "🟡 CONGESTION"
+            except:
+                return "🟡 CONGESTION"
+
         logs = data_dict.get(base, [])
         logs = sorted(logs, key=lambda x: x.get("timestamp", ""))
         if logs:
@@ -174,14 +209,7 @@ def generate_telemetry():
                     tf_val = row.get("timeframe", "?")
                     tf_prefix = f"{tf_val}m | "
 
-                trend = "WAITING"
-                try:
-                    if float(price) > float(vwap):
-                        trend = "🟢 BULLISH"
-                    elif float(price) < float(vwap):
-                        trend = "🔴 BEARISH"
-                except:
-                    pass
+                trend = evaluate_trend_state(price, vwap, ema20, ema50, ema200, rsi)
                 print(f"| **{base}** | {tf_prefix}{price} | {vwap} | {trend} | {ema20} | {ema50} | {ema200} | {rsi} | {ts} |")
         else:
             tf_prefix = " - |" if include_tf else ""
@@ -241,7 +269,29 @@ def generate_telemetry():
     print("👉 INSTRUCTIONS FOR CLAUDE:")
     print("1. Map these indicators to your active positions queried via mcp_kite_get_positions().")
     print("2. Normalise symbol 'SBIN' with 'NSE:SBIN-EQ' (Fyers) / 'NSE:SBIN' (Zerodha).")
-    print("3. Check for crossovers: If price is above VWAP on both 5m and 15m, trend is highly BULLISH.")
+    print("3. CRITICAL QUANTITATIVE TREND CONFIRMATION ENGINE LOGIC:")
+    print("   The 'Trend State' in the telemetry tables is evaluated using these strict rules:")
+    print("   🟢 Bullish Setup (Breakout Confirmation):")
+    print("     - Rule 1 (Baseline): Price > VWAP (Price is trading above institutional average price)")
+    print("     - Rule 2 (Trend Structure): 20 EMA > 50 EMA (Short-term trend is above mid-term trend)")
+    print("     - Rule 3 (Long-term Anchor): Price > 200 EMA (Overall macro structure is supportive)")
+    print("     - Rule 4 (Momentum): RSI > 50 (Buying pressure is dominant)")
+    print("   🔴 Bearish Setup (Breakdown Confirmation):")
+    print("     - Rule 1 (Baseline): Price < VWAP (Price is trading below institutional average price)")
+    print("     - Rule 2 (Trend Structure): 20 EMA < 50 EMA (Short-term trend is below mid-term trend)")
+    print("     - Rule 3 (Long-term Anchor): Price < 200 EMA (Overall macro structure is resistive)")
+    print("     - Rule 4 (Momentum): RSI < 50 (Selling pressure is dominant)")
+    print("   Mapped Trend States in Telemetry Table:")
+    print("     - 🟢 BULLISH: All 4 Bullish rules are met.")
+    print("     - 🔴 BEARISH: All 4 Bearish rules are met.")
+    print("     - ⚠️ OVERBOUGHT: All 4 Bullish rules are met, but RSI > 70 (caution on chase).")
+    print("     - ⚠️ OVERSOLD: All 4 Bearish rules are met, but RSI < 30 (caution on shorting support).")
+    print("     - 🟡 CONGESTION: Indicators are conflicting or sideways.")
+    print("4. Actionable Directives:")
+    print("   - When Trend State is 🟢 BULLISH: Look for long entries on pullbacks to the 20/50 EMAs.")
+    print("   - When Trend State is 🔴 BEARISH: Look for short entries on rallies to the 20/50 EMAs.")
+    print("   - When Trend State is 🟡 CONGESTION: Avoid starting new momentum trades (market is choppy).")
+    print("   - When Trend State is ⚠️ OVERBOUGHT / ⚠️ OVERSOLD: Tighten trailing stops immediately.")
     print("============================================================")
 
 if __name__ == "__main__":

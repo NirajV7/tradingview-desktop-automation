@@ -22,17 +22,149 @@
             }, 4000);
         }
 
+        let engineStatus = { tv: false, fyers: false, log: false };
+
+        function updateStatus() {
+            fetch('/api/status').then(r => r.json()).then(d => {
+                engineStatus.tv = d.tv;
+                engineStatus.fyers = d.fyers;
+                engineStatus.log = d.log;
+                
+                document.getElementById('dot-tv').className = d.tv ? 'status-dot active' : 'status-dot';
+                document.getElementById('dot-fyers').className = d.fyers ? 'status-dot active' : 'status-dot';
+                document.getElementById('dot-log').className = d.log ? 'status-dot active' : 'status-dot';
+                
+                const btnTv = document.getElementById('btn-tv');
+                if (btnTv) {
+                    if (d.tv) {
+                        btnTv.disabled = true;
+                        btnTv.innerText = 'OPEN';
+                        btnTv.className = 'btn btn-blue';
+                        btnTv.style.opacity = '0.5';
+                        btnTv.style.pointerEvents = 'none';
+                    } else {
+                        btnTv.disabled = false;
+                        btnTv.innerText = 'OPEN';
+                        btnTv.className = 'btn btn-blue';
+                        btnTv.style.opacity = '1';
+                        btnTv.style.pointerEvents = 'auto';
+                    }
+                }
+                
+                const btnFyers = document.getElementById('btn-fyers');
+                if (btnFyers) {
+                    btnFyers.disabled = false;
+                    if (d.fyers) {
+                        btnFyers.innerText = 'STOP';
+                        btnFyers.className = 'btn btn-red';
+                    } else {
+                        btnFyers.innerText = 'START';
+                        btnFyers.className = 'btn btn-green';
+                    }
+                }
+                
+                const btnLog = document.getElementById('btn-log');
+                if (btnLog) {
+                    btnLog.disabled = false;
+                    if (d.log) {
+                        btnLog.innerText = 'STOP';
+                        btnLog.className = 'btn btn-red';
+                    } else {
+                        btnLog.innerText = 'START';
+                        btnLog.className = 'btn btn-purple';
+                    }
+                }
+
+                // Update Master Buttons based on status
+                const btnStartAll = document.getElementById('btn-start-all');
+                const btnStopAll = document.getElementById('btn-stop-all');
+                const anyStopped = !d.fyers || !d.log;
+                const allStopped = !d.fyers && !d.log;
+                
+                if (btnStartAll) {
+                    btnStartAll.disabled = !anyStopped;
+                    btnStartAll.style.opacity = !anyStopped ? '0.4' : '1';
+                    btnStartAll.style.pointerEvents = !anyStopped ? 'none' : 'auto';
+                }
+                
+                if (btnStopAll) {
+                    btnStopAll.disabled = allStopped;
+                    btnStopAll.style.opacity = allStopped ? '0.4' : '1';
+                    btnStopAll.style.pointerEvents = allStopped ? 'none' : 'auto';
+                }
+            });
+        }
+
+        function toggleEngine(engine) {
+            const isRunning = engineStatus[engine];
+            let endpoint = '';
+            if (engine === 'tv') {
+                endpoint = isRunning ? '/stop_tv' : '/start_tv';
+            } else if (engine === 'fyers') {
+                endpoint = isRunning ? '/stop_fyers' : '/start_fyers';
+            } else if (engine === 'log') {
+                endpoint = isRunning ? '/stop_tv_log' : '/start_tv_log';
+            }
+            
+            const btn = document.getElementById(`btn-${engine}`);
+            if (btn) {
+                btn.innerText = 'WAIT...';
+                btn.disabled = true;
+            }
+            
+            fetch(`${endpoint}?ajax=1`)
+                .then(r => r.json())
+                .then(d => {
+                    showToast(d.message, d.status);
+                    updateStatus();
+                })
+                .catch(err => {
+                    showToast('Action failed: ' + err.message, 'error');
+                    updateStatus();
+                });
+        }
+
+        function startAll() {
+            const btn = document.getElementById('btn-start-all');
+            if (btn) btn.disabled = true;
+            fetch('/start_all?ajax=1')
+                .then(r => r.json())
+                .then(d => {
+                    showToast(d.message, d.status);
+                    updateStatus();
+                    if (btn) btn.disabled = false;
+                })
+                .catch(err => {
+                    showToast('Start All failed: ' + err.message, 'error');
+                    updateStatus();
+                    if (btn) btn.disabled = false;
+                });
+        }
+
+        function stopAll() {
+            const btn = document.getElementById('btn-stop-all');
+            if (btn) btn.disabled = true;
+            fetch('/stop?ajax=1')
+                .then(r => r.json())
+                .then(d => {
+                    showToast(d.message, d.status);
+                    updateStatus();
+                    if (btn) btn.disabled = false;
+                })
+                .catch(err => {
+                    showToast('Stop All failed: ' + err.message, 'error');
+                    updateStatus();
+                    if (btn) btn.disabled = false;
+                });
+        }
+
         // Live Polls (Telemetry Updates)
         setInterval(function(){
             fetch('/api/data').then(r => r.json()).then(d => {
                 document.getElementById('signal-rows').innerHTML = d.html;
             });
             
-            fetch('/api/status').then(r => r.json()).then(d => {
-                document.getElementById('dot-tv').className = d.tv ? 'status-dot active' : 'status-dot';
-                document.getElementById('dot-fyers').className = d.fyers ? 'status-dot active' : 'status-dot';
-                document.getElementById('dot-log').className = d.log ? 'status-dot active' : 'status-dot';
-            });
+            updateStatus();
             
             fetch('/api/logs').then(r => r.json()).then(data => {
                 const con = document.getElementById('console-output');
@@ -157,6 +289,37 @@
                         </tbody>
                     </table>
                 </div>
+                <!-- Sleek Trend Rules Legend -->
+                <div class="legend-box" style="margin-top: 20px; text-align: left; padding: 16px 20px; background: rgba(13, 17, 23, 0.6); border: 1px solid #30363d; border-radius: 12px; font-size: 0.82em; color: #8b949e; line-height: 1.5;">
+                    <div style="font-weight: 700; color: #c9d1d9; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; font-size: 0.95em;">
+                        🔍 Trend State Logic & Confirmation Rules
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div>
+                            <strong style="color: #3fb950; display: inline-flex; align-items: center; gap: 4px;">🟢 BULLISH SETUP (All 4 Met)</strong>
+                            <ul style="margin: 6px 0 0 12px; padding: 0; list-style-type: none;">
+                                <li>• Price &gt; VWAP <span style="font-size:0.85em; color:#58a6ff;">(Institutional baseline)</span></li>
+                                <li>• 20 EMA &gt; 50 EMA <span style="font-size:0.85em; color:#58a6ff;">(Bullish structure)</span></li>
+                                <li>• Price &gt; 200 EMA <span style="font-size:0.85em; color:#58a6ff;">(Macro anchor)</span></li>
+                                <li>• RSI &gt; 50 <span style="font-size:0.85em; color:#58a6ff;">(Buying momentum)</span></li>
+                                <li style="margin-top:4px;"><strong style="color: #d29922;">⚠️ OVERBOUGHT:</strong> Bullish met + RSI &gt; 70</li>
+                            </ul>
+                        </div>
+                        <div>
+                            <strong style="color: #f85149; display: inline-flex; align-items: center; gap: 4px;">🔴 BEARISH SETUP (All 4 Met)</strong>
+                            <ul style="margin: 6px 0 0 12px; padding: 0; list-style-type: none;">
+                                <li>• Price &lt; VWAP <span style="font-size:0.85em; color:#ff7b72;">(Institutional baseline)</span></li>
+                                <li>• 20 EMA &lt; 50 EMA <span style="font-size:0.85em; color:#ff7b72;">(Bearish structure)</span></li>
+                                <li>• Price &lt; 200 EMA <span style="font-size:0.85em; color:#ff7b72;">(Macro anchor)</span></li>
+                                <li>• RSI &lt; 50 <span style="font-size:0.85em; color:#ff7b72;">(Selling momentum)</span></li>
+                                <li style="margin-top:4px;"><strong style="color: #d29922;">⚠️ OVERSOLD:</strong> Bearish met + RSI &lt; 30</li>
+                            </ul>
+                        </div>
+                    </div>
+                    <div style="margin-top: 10px; border-top: 1px solid rgba(48, 54, 61, 0.5); padding-top: 10px;">
+                        <strong style="color: #8b949e;">🟡 CONGESTION:</strong> Indicators or timeframes are conflicting, representing a sideways or choppy structure.
+                    </div>
+                </div>
             </div>
 
             <!-- Console Window -->
@@ -188,7 +351,7 @@
                             <span id="dot-tv" class="status-dot"></span>
                             <span>TradingView App</span>
                         </div>
-                        <a href="/start_tv" class="btn btn-blue">OPEN</a>
+                        <button id="btn-tv" onclick="toggleEngine('tv')" class="btn btn-blue" style="min-width: 80px;">OPEN</button>
                     </div>
                     
                     <div class="control-row">
@@ -196,7 +359,7 @@
                             <span id="dot-fyers" class="status-dot"></span>
                             <span>Fyers Engine</span>
                         </div>
-                        <a href="/start_fyers" class="btn btn-green">START</a>
+                        <button id="btn-fyers" onclick="toggleEngine('fyers')" class="btn btn-green" style="min-width: 80px;">START</button>
                     </div>
                     
                     <div class="control-row">
@@ -204,15 +367,18 @@
                             <span id="dot-log" class="status-dot"></span>
                             <span>TV Price Logs</span>
                         </div>
-                        <a href="/start_tv_log" class="btn btn-purple">START</a>
+                        <button id="btn-log" onclick="toggleEngine('log')" class="btn btn-purple" style="min-width: 80px;">START</button>
                     </div>
                     
-                    <div class="action-grid">
-                        <a href="/sync_tabs" class="btn btn-gradient">SYNC TABS</a>
-                        <a href="/stop" class="btn btn-red">STOP ALL</a>
+                    <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 15px;">
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                            <button id="btn-start-all" onclick="startAll()" class="btn btn-green" style="font-weight: 700;">⚡ START ALL</button>
+                            <button id="btn-stop-all" onclick="stopAll()" class="btn btn-red" style="font-weight: 700;">🛑 STOP ALL</button>
+                        </div>
+                        <a href="/sync_tabs" class="btn btn-gradient" style="width: auto;">🔄 SYNC DUAL-TIMEFRAME TABS</a>
                     </div>
                     
-                    <a href="/clear_logs" class="btn btn-gray">🧹 WIPE ALL LOGS</a>
+                    <a href="/clear_logs" class="btn btn-gray" style="margin-top: 10px;">🧹 WIPE ALL LOGS</a>
                 </div>
             </div>
 

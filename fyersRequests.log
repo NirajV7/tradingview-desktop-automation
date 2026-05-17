@@ -1,4 +1,0 @@
-{"level":"DEBUG","location":"[get_call:159] fyersModel","message":{"Status Code":200,"API":"/quotes"},"timestamp":"2026-05-15 07:20:01,561+0530","service":"FyersAPIRequest"}
-{"level":"DEBUG","location":"[get_call:159] fyersModel","message":{"Status Code":200,"API":"/quotes"},"timestamp":"2026-05-15 07:29:04,337+0530","service":"FyersAPIRequest"}
-{"level":"DEBUG","location":"[get_call:159] fyersModel","message":{"Status Code":200,"API":"/quotes"},"timestamp":"2026-05-15 07:30:04,467+0530","service":"FyersAPIRequest"}
-{"level":"DEBUG","location":"[get_call:159] fyersModel","message":{"Status Code":200,"API":"/quotes"},"timestamp":"2026-05-15 07:39:11,919+0530","service":"FyersAPIRequest"}
