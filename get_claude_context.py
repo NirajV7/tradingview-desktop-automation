@@ -162,9 +162,9 @@ def generate_telemetry():
             for row in logs[-limit:]:
                 price = row.get("price", "...")
                 vwap = find_indicator_value(row, "VWAP", "ind_Volume Weighted Average Price")
-                ema20 = find_indicator_value(row, "Exponential(20)", "ind_Moving Average Exponential")
+                ema20 = find_indicator_value(row, "Exponential(20)", "ind_Moving Average Exponential 3")
                 ema50 = find_indicator_value(row, "Exponential(50)", "ind_Moving Average Exponential 2")
-                ema200 = find_indicator_value(row, "Exponential(200)", "ind_Moving Average Exponential 3")
+                ema200 = find_indicator_value(row, "Exponential(200)", "ind_Moving Average Exponential")
                 rsi = find_indicator_value(row, "RSI", "ind_Relative Strength Index")
                 ts = row.get("timestamp", "...").split(" ")[-1]
                 
