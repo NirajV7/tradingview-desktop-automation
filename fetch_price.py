@@ -115,8 +115,21 @@ def log_to_csv(data, filename="trading_log.csv"):
 
     if not rows: return
 
-    # Determine fieldnames (existing header + new indicators)
-    fieldnames = sorted(list(all_fields))
+    # Determine fieldnames (align with existing header to prevent column shift-left bugs)
+    if os.path.exists(filename) and os.stat(filename).st_size > 0:
+        try:
+            with open(filename, mode='r') as f:
+                header = f.readline().strip()
+                fieldnames = [col.strip() for col in header.split(',') if col.strip()]
+            # Ensure any newly discovered indicators are appended to the fieldnames
+            for field in sorted(list(all_fields)):
+                if field not in fieldnames:
+                    fieldnames.append(field)
+        except Exception as e:
+            print(f"CSV Header alignment fallback: {e}")
+            fieldnames = sorted(list(all_fields))
+    else:
+        fieldnames = sorted(list(all_fields))
     
     # DYNAMIC CHECK: Does file need headers?
     file_needs_header = not os.path.exists(filename) or os.stat(filename).st_size == 0
