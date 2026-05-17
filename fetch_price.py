@@ -6,6 +6,7 @@ import random
 import csv
 import os
 from datetime import datetime
+import config
 
 def fetch_all_tv_prices():
     try:
@@ -90,6 +91,27 @@ def fetch_all_tv_prices():
 
     return results
 
+def get_last_logged_bucket_from_csv(filename, symbol):
+    if not os.path.exists(filename) or os.stat(filename).st_size == 0:
+        return None
+    try:
+        with open(filename, 'r') as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            if not rows: return None
+            # Filter rows for this specific symbol
+            symbol_rows = [r for r in rows if r.get('symbol') == symbol]
+            if not symbol_rows: return None
+            last_row = symbol_rows[-1]
+            ts_str = last_row.get('timestamp')
+            if ts_str:
+                dt = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+                epoch = int(dt.timestamp())
+                return epoch
+    except Exception as e:
+        print(f"Error reading last bucket from {filename}: {e}")
+    return None
+
 def log_to_csv(data, filename="trading_log.csv"):
     if not isinstance(data, list) or not data:
         return
@@ -145,16 +167,12 @@ def log_to_csv(data, filename="trading_log.csv"):
     print(f"✅ Logged {len(rows)} entries to {filename}")
 
 if __name__ == "__main__":
-    WATCHLIST_FILE = "watchlist.json"
-    watchlist = []
-    if os.path.exists(WATCHLIST_FILE):
-        with open(WATCHLIST_FILE, "r") as f:
-            watchlist = json.load(f)
-            # Remove prefixes/suffixes for matching TV tab titles or symbol names
-            watchlist_clean = [s.split(":")[1].split("-")[0] if ":" in s else s for s in watchlist]
+    WATCHLIST_FILE = config.WATCHLIST_FILE
+    last_logged_5m = {}
+    last_logged_15m = {}
 
     # Loop Forever
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 TV Price Engine Started. Polling every 180s...")
+    print(f"[{datetime.now().strftime('%H:%M:%S')}] 🚀 TV Price Engine Started. Polling every 15s...")
     while True:
         try:
             watchlist = []
@@ -171,10 +189,40 @@ if __name__ == "__main__":
                     if "error" in entry: continue
                     symbol = entry.get('symbol', '???')
                     found_symbols.append(symbol)
-                    price = entry.get('price', '???')
-                    timeframe = entry.get('timeframe', '???')
                 
-                log_to_csv(data)
+                # 1. Log to the high-frequency micro CSV
+                log_to_csv(data, filename=config.TRADING_LOG)
+                
+                # 2. Log to the 5M and 15M closed candle CSVs upon Epoch Crossover
+                now_epoch = int(time.time())
+                bucket_5m = now_epoch - (now_epoch % 300)
+                bucket_15m = now_epoch - (now_epoch % 900)
+                
+                for entry in data:
+                    if "error" in entry: continue
+                    sym = entry.get('symbol')
+                    if not sym: continue
+                    
+                    tf = str(entry.get('timeframe', ''))
+                    
+                    if tf == "5":
+                        if sym not in last_logged_5m:
+                            last_logged_5m[sym] = get_last_logged_bucket_from_csv(config.TRADING_LOG_5M, sym)
+                        
+                        if last_logged_5m[sym] is None or bucket_5m > last_logged_5m[sym]:
+                            log_to_csv([entry], filename=config.TRADING_LOG_5M)
+                            last_logged_5m[sym] = bucket_5m
+                            print(f"[{datetime.now().strftime('%H:%M:%S')}] 📈 [TV 5M BUCKET CLOSE] Logged for {sym}")
+                            
+                    elif tf == "15":
+                        if sym not in last_logged_15m:
+                            last_logged_15m[sym] = get_last_logged_bucket_from_csv(config.TRADING_LOG_15M, sym)
+                        
+                        if last_logged_15m[sym] is None or bucket_15m > last_logged_15m[sym]:
+                            log_to_csv([entry], filename=config.TRADING_LOG_15M)
+                            last_logged_15m[sym] = bucket_15m
+                            print(f"[{datetime.now().strftime('%H:%M:%S')}] 📈 [TV 15M BUCKET CLOSE] Logged for {sym}")
+
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] ✅ Logged {len(found_symbols)} TV entries.", flush=True)
             else:
                 print(f"[{datetime.now().strftime('%H:%M:%S')}] ⚠️ TV Error: {data}", flush=True)

@@ -12,7 +12,11 @@ MASTER_CSV = os.path.join(CWD, "fyers_nse_cm.csv")
 VENV_PYTHON = os.path.join(CWD, "venv/bin/python3")
 CDP_URL = "http://localhost:9222/json"
 TRADING_LOG = os.path.join(CWD, "trading_log.csv")
+TRADING_LOG_5M = os.path.join(CWD, "trading_log_5m.csv")
+TRADING_LOG_15M = os.path.join(CWD, "trading_log_15m.csv")
 FYERS_LOG = os.path.join(CWD, "fyers_official_log.csv")
+FYERS_LOG_5M = os.path.join(CWD, "fyers_log_5m.csv")
+FYERS_LOG_15M = os.path.join(CWD, "fyers_log_15m.csv")
 ENGINE_LOG = os.path.join(CWD, "engine.log")
 
 CLIENT_ID = os.getenv("FYERS_CLIENT_ID")
