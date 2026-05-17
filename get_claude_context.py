@@ -162,8 +162,9 @@ def generate_telemetry():
             for row in logs[-limit:]:
                 price = row.get("price", "...")
                 vwap = find_indicator_value(row, "VWAP", "ind_Volume Weighted Average Price")
-                ema8 = find_indicator_value(row, "Exponential(8)", "ind_Moving Average Exponential")
-                ema21 = find_indicator_value(row, "Exponential(21)", "ind_Moving Average Exponential 2")
+                ema20 = find_indicator_value(row, "Exponential(20)", "ind_Moving Average Exponential")
+                ema50 = find_indicator_value(row, "Exponential(50)", "ind_Moving Average Exponential 2")
+                ema200 = find_indicator_value(row, "Exponential(200)", "ind_Moving Average Exponential 3")
                 rsi = find_indicator_value(row, "RSI", "ind_Relative Strength Index")
                 ts = row.get("timestamp", "...").split(" ")[-1]
                 
@@ -181,10 +182,10 @@ def generate_telemetry():
                         trend = "🔴 BEARISH"
                 except:
                     pass
-                print(f"| **{base}** | {tf_prefix}{price} | {vwap} | {trend} | {ema8} | {ema21} | {rsi} | {ts} |")
+                print(f"| **{base}** | {tf_prefix}{price} | {vwap} | {trend} | {ema20} | {ema50} | {ema200} | {rsi} | {ts} |")
         else:
             tf_prefix = " - |" if include_tf else ""
-            print(f"| **{base}** | {tf_prefix}- | - | - | - | - | - | - |")
+            print(f"| **{base}** | {tf_prefix}- | - | - | - | - | - | - | - |")
 
     # ==========================================
     # SECTION 1: MICRO-VELOCITY ORDER FLOW (15s/5s)
@@ -197,8 +198,8 @@ def generate_telemetry():
         print_fyers_table(fyers_micro, base, limit=8)
         
     print("\n#### [1B. TradingView Micro Indicator Logs (15s Frequency)]")
-    print("| Ticker | TF | Price | VWAP | Trend State | EMA(8) | EMA(21) | RSI | Time |")
-    print("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+    print("| Ticker | TF | Price | VWAP | Trend State | EMA(20) | EMA(50) | EMA(200) | RSI | Time |")
+    print("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
     for base in sorted(active_bases):
         print_tv_table(tv_micro, base, limit=8, include_tf=True)
     print("")
@@ -208,8 +209,8 @@ def generate_telemetry():
     # ==========================================
     print("### 2. 5-MINUTE WAVE PROGRESSION (Last 10 Closed 5M Candles)")
     print("\n#### [2A. TradingView 5-Minute Technical Candles]")
-    print("| Ticker | Price | VWAP | Trend State | EMA(8) | EMA(21) | RSI | Time |")
-    print("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+    print("| Ticker | Price | VWAP | Trend State | EMA(20) | EMA(50) | EMA(200) | RSI | Time |")
+    print("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
     for base in sorted(active_bases):
         print_tv_table(tv_5m, base, limit=10, include_tf=False)
         
@@ -225,8 +226,8 @@ def generate_telemetry():
     # ==========================================
     print("### 3. 15-MINUTE MACRO TIDE PROGRESSION (Last 10 Closed 15M Candles)")
     print("\n#### [3A. TradingView 15-Minute Technical Candles]")
-    print("| Ticker | Price | VWAP | Trend State | EMA(8) | EMA(21) | RSI | Time |")
-    print("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+    print("| Ticker | Price | VWAP | Trend State | EMA(20) | EMA(50) | EMA(200) | RSI | Time |")
+    print("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
     for base in sorted(active_bases):
         print_tv_table(tv_15m, base, limit=10, include_tf=False)
         
