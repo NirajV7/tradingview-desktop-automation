@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NJ Quant Mission Control</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script>
+        function showToast(message, type = 'success') {
+            const container = document.getElementById('toast-container');
+            if (!container) return;
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.innerHTML = (type === 'success' ? '⚡ ' : '🚨 ') + message;
+            container.appendChild(toast);
+            setTimeout(() => {
+                toast.style.opacity = '0';
+                toast.style.transform = 'translateX(100%)';
+                toast.style.transition = 'all 0.5s cubic-bezier(0.4, 0, 0.2, 1)';
+                setTimeout(() => toast.remove(), 500);
+            }, 4000);
+        }
+
+        // Live Polls (Telemetry Updates)
+        setInterval(function(){
+            fetch('/api/data').then(r => r.json()).then(d => {
+                document.getElementById('signal-rows').innerHTML = d.html;
+            });
+            
+            fetch('/api/status').then(r => r.json()).then(d => {
+                document.getElementById('dot-tv').className = d.tv ? 'status-dot active' : 'status-dot';
+                document.getElementById('dot-fyers').className = d.fyers ? 'status-dot active' : 'status-dot';
+                document.getElementById('dot-log').className = d.log ? 'status-dot active' : 'status-dot';
+            });
+            
+            fetch('/api/logs').then(r => r.json()).then(data => {
+                const con = document.getElementById('console-output');
+                if (!con) return;
+                const wasAtBottom = con.scrollHeight - con.clientHeight <= con.scrollTop + 1;
+                con.innerText = data.logs || "> Awaiting telemetry feed from satellite uplink...";
+                if (wasAtBottom) con.scrollTop = con.scrollHeight;
+            });
+        }, 2000);
+
+        // Search & Auto-complete
+        function searchStocks(q) {
+            const results = document.getElementById('search-results');
+            if (q.length < 2) {
+                results.style.display = 'none';
+                return;
+            }
+            fetch(`/api/search?q=${q}`)
+                .then(r => r.json())
+                .then(data => {
+                    results.innerHTML = '';
+                    if (data.length > 0) {
+                        data.forEach(item => {
+                            const div = document.createElement('div');
+                            div.className = 'search-item';
+                            div.innerHTML = `<span class="ticker">${item.ticker}</span> <span class="name">${item.name}</span>`;
+                            div.onclick = () => selectStock(item.fyers);
+                            results.appendChild(div);
+                        });
+                        results.style.display = 'block';
+                    } else {
+                        results.style.display = 'none';
+                    }
+                });
+        }
+
+        function selectStock(symbol) {
+            fetch('/api/add_symbol', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({symbol: symbol})
+            }).then(() => window.location.reload());
+        }
+
+        function removeStock(symbol) {
+            fetch('/api/remove_symbol', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({symbol: symbol})
+            }).then(() => window.location.reload());
+        }
+
+        // On Page Load, check for query parameter notifications
+        window.addEventListener('DOMContentLoaded', () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const msg = urlParams.get('msg');
+            const msgType = urlParams.get('msg_type') || 'success';
+            if (msg) {
+                showToast(msg, msgType);
+                // Clean the query parameters from URL
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+        });
+    </script>
+</head>
+<body>
+    <div id="toast-container"></div>
+    
+    <header class="dashboard-header">
+        <div class="logo-area">
+            <span class="pulse-ring"></span>
+            <h1>NJ QUANT TERMINAL</h1>
+            <span class="badge">V3 ASYNC</span>
+        </div>
+        <div class="system-time">
+            <span>BENGALURU, INDIA</span>
+            <span class="separator">|</span>
+            <span id="live-clock" style="font-family: 'JetBrains Mono', monospace;">Loading clock...</span>
+        </div>
+        <script>
+            function updateClock() {
+                const now = new Date();
+                document.getElementById('live-clock').innerText = now.toLocaleTimeString('en-US', { hour12: false });
+            }
+            setInterval(updateClock, 1000);
+            updateClock();
+        </script>
+    </header>
+    
+    <main class="grid">
+        <!-- Main Column -->
+        <section class="main-col">
+            <!-- Signal Grid Card -->
+            <div class="card glassmorphism signal-card">
+                <div class="card-header">
+                    <div class="header-title">
+                        <span class="icon">📊</span>
+                        <h3>Live Signal Grid</h3>
+                    </div>
+                    <span class="pulse-indicator">● LIVE FEED</span>
+                </div>
+                <div class="table-container">
+                    <table class="watchlist-table">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Fyers Price</th>
+                                <th>5m Wave</th>
+                                <th>15m Tide</th>
+                                <th>Trend Signal</th>
+                            </tr>
+                        </thead>
+                        <tbody id="signal-rows">
+                            <tr>
+                                <td colspan="5" style="text-align:center; padding: 60px; color:#8b949e;">
+                                    <div class="loading-container">
+                                        <span class="loading-spinner"></span>
+                                        <p>[ WAITING FOR SYSTEM HEARTBEAT ]</p>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Console Window -->
+            <div class="card glassmorphism console-card">
+                <div class="card-header">
+                    <div class="header-title">
+                        <span class="icon">🛰️</span>
+                        <h3>System Live Console</h3>
+                    </div>
+                    <span class="pulse-indicator stream">● STREAMING</span>
+                </div>
+                <div id="console-output" class="console-window">> Initializing satellite uplink...</div>
+            </div>
+        </section>
+        
+        <!-- Sidebar Column -->
+        <section class="side-col">
+            <!-- Engine Controls -->
+            <div class="card glassmorphism control-card">
+                <div class="card-header">
+                    <div class="header-title">
+                        <span class="icon">⚙️</span>
+                        <h3>Engine Controls</h3>
+                    </div>
+                </div>
+                <div class="control-list">
+                    <div class="control-row">
+                        <div class="label-area">
+                            <span id="dot-tv" class="status-dot"></span>
+                            <span>TradingView App</span>
+                        </div>
+                        <a href="/start_tv" class="btn btn-blue">OPEN</a>
+                    </div>
+                    
+                    <div class="control-row">
+                        <div class="label-area">
+                            <span id="dot-fyers" class="status-dot"></span>
+                            <span>Fyers Engine</span>
+                        </div>
+                        <a href="/start_fyers" class="btn btn-green">START</a>
+                    </div>
+                    
+                    <div class="control-row">
+                        <div class="label-area">
+                            <span id="dot-log" class="status-dot"></span>
+                            <span>TV Price Logs</span>
+                        </div>
+                        <a href="/start_tv_log" class="btn btn-purple">START</a>
+                    </div>
+                    
+                    <div class="action-grid">
+                        <a href="/sync_tabs" class="btn btn-gradient">SYNC TABS</a>
+                        <a href="/stop" class="btn btn-red">STOP ALL</a>
+                    </div>
+                    
+                    <a href="/clear_logs" class="btn btn-gray">🧹 WIPE ALL LOGS</a>
+                </div>
+            </div>
+
+            <!-- Authorization Card -->
+            <div class="card glassmorphism auth-card">
+                <div class="card-header">
+                    <div class="header-title">
+                        <span class="icon">🔑</span>
+                        <h3>Fyers API Authorization</h3>
+                    </div>
+                </div>
+                <div class="auth-body">
+                    {% if needs_login %}
+                        <div class="status-message error">
+                            <span class="status-indicator"></span>
+                            <p>TOKEN EXPIRED</p>
+                        </div>
+                        <a href="{{ auth_url }}" target="_blank" class="btn btn-blue" style="width:100%; box-sizing:border-box;">Request Access Code</a>
+                        <form action="/auth" method="POST" class="auth-form">
+                            <input type="text" name="auth_code" placeholder="Paste Authorization Code..." required>
+                            <button type="submit" class="btn btn-green" style="width:100%;">Authorize Session</button>
+                        </form>
+                    {% else %}
+                        <div class="status-message success">
+                            <span class="status-indicator"></span>
+                            <p>TOKEN ACTIVE (Good for today)</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Search Add Stock -->
+            <div class="card glassmorphism search-card">
+                <div class="card-header">
+                    <div class="header-title">
+                        <span class="icon">🔍</span>
+                        <h3>Add Stock</h3>
+                    </div>
+                </div>
+                <div class="search-body">
+                    <input type="text" id="stock-search" placeholder="Search Company or Ticker..." onkeyup="searchStocks(this.value)" autocomplete="off">
+                    <div id="search-results"></div>
+                    <p class="search-tip">Uses official Fyers Master Symbol Database</p>
+                </div>
+            </div>
+
+            <!-- Active Watchlist -->
+            <div class="card glassmorphism watchlist-card">
+                <div class="card-header">
+                    <div class="header-title">
+                        <span class="icon">📋</span>
+                        <h3>Active Watchlist</h3>
+                    </div>
+                    <span class="badge counter">{{ symbols_list|length }} STOCKS</span>
+                </div>
+                <div class="watchlist-body">
+                    <div class="watchlist-tags">
+                        {% if not symbols_list %}
+                            <p class="empty-msg">No active stocks. Use the search box above to populate.</p>
+                        {% endif %}
+                        {% for sym in symbols_list %}
+                            <div class="symbol-tag">
+                                <span class="sym-text">{{ sym }}</span>
+                                <span class="remove-btn" onclick="removeStock('{{ sym }}')" title="Remove">×</span>
+                            </div>
+                        {% endfor %}
+                    </div>
+                    {% if symbols_list %}
+                        <a href="/clear_watchlist" class="btn btn-outline-red">Clear All Symbols</a>
+                    {% endif %}
+                </div>
+            </div>
+        </section>
+    </main>
+</body>
+</html>
