@@ -6,6 +6,7 @@ import os
 import json
 import csv
 import requests
+import websocket
 import random
 import time
 import subprocess
@@ -257,7 +258,10 @@ async def api_status():
     tv_open = False
     try:
         res = requests.get(config.CDP_URL, timeout=0.5)
-        tv_open = (res.status_code == 200)
+        if res.status_code == 200:
+            # Robust Check: Ensure at least one tab is actually a TradingView chart
+            tabs = res.json()
+            tv_open = any("tradingview.com/chart" in t.get("url", "") for t in tabs)
     except: 
         pass
     
