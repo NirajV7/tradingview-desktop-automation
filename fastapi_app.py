@@ -123,13 +123,24 @@ async def start_tv_log():
 
 @app.get("/clear_logs")
 async def clear_logs():
-    for f in [config.TRADING_LOG, config.FYERS_LOG, config.ENGINE_LOG]:
+    targets = [
+        config.TRADING_LOG,
+        config.TRADING_LOG_5M,
+        config.TRADING_LOG_15M,
+        config.FYERS_LOG,
+        config.FYERS_LOG_5M,
+        config.FYERS_LOG_15M,
+        config.ENGINE_LOG
+    ]
+    wiped_count = 0
+    for f in targets:
         if os.path.exists(f):
             try:
                 os.remove(f)
+                wiped_count += 1
             except:
                 pass
-    return RedirectResponse(url="/?msg=All+Logs+Wiped!&msg_type=success", status_code=303)
+    return RedirectResponse(url=f"/?msg=Wiped+{wiped_count}+Active+Log+Files!&msg_type=success", status_code=303)
 
 @app.get("/sync_tabs")
 async def sync_tabs():
