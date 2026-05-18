@@ -22,17 +22,48 @@
             }, 4000);
         }
 
-        let engineStatus = { tv: false, fyers: false, log: false };
+        let engineStatus = { tv: false, fyers: false, log: false, radar: false, kite: false };
+        let kiteActive = false;
 
         function updateStatus() {
             fetch('/api/status').then(r => r.json()).then(d => {
                 engineStatus.tv = d.tv;
                 engineStatus.fyers = d.fyers;
                 engineStatus.log = d.log;
+                engineStatus.radar = d.radar;
+                engineStatus.kite = (d.kite_engine && d.kite_engine !== 'stopped');
                 
                 document.getElementById('dot-tv').className = d.tv ? 'status-dot active' : 'status-dot';
                 document.getElementById('dot-fyers').className = d.fyers ? 'status-dot active' : 'status-dot';
                 document.getElementById('dot-log').className = d.log ? 'status-dot active' : 'status-dot';
+                document.getElementById('dot-radar').className = d.radar ? 'status-dot active' : 'status-dot';
+                
+                const dotKite = document.getElementById('dot-kite');
+                if (dotKite) {
+                    if (d.kite_engine === 'live') {
+                        dotKite.className = 'status-dot active';
+                        dotKite.style.backgroundColor = '#ef4444'; // Red for LIVE
+                        dotKite.style.boxShadow = '0 0 10px rgba(239, 68, 68, 0.8)';
+                    } else if (d.kite_engine === 'dry') {
+                        dotKite.className = 'status-dot active';
+                        dotKite.style.backgroundColor = '#10b981'; // Green for DRY RUN
+                        dotKite.style.boxShadow = '0 0 10px rgba(16, 185, 129, 0.8)';
+                    } else {
+                        dotKite.className = 'status-dot';
+                        dotKite.style.backgroundColor = '#4b5563'; // Gray for stopped
+                        dotKite.style.boxShadow = 'none';
+                    }
+                }
+                
+                const marginEl = document.getElementById('kite-margin-value');
+                const breakdownEl = document.getElementById('kite-margin-breakdown');
+                if (d.kite_margin) {
+                    kiteActive = true;
+                    if (marginEl) marginEl.innerText = d.kite_margin.net;
+                    if (breakdownEl) breakdownEl.innerText = `Cash: ${d.kite_margin.cash} | Collateral: ${d.kite_margin.collateral}`;
+                } else {
+                    kiteActive = false;
+                }
                 
                 const btnTv = document.getElementById('btn-tv');
                 if (btnTv) {
@@ -75,11 +106,35 @@
                     }
                 }
 
+                const btnRadar = document.getElementById('btn-radar');
+                if (btnRadar) {
+                    btnRadar.disabled = false;
+                    if (d.radar) {
+                        btnRadar.innerText = 'STOP';
+                        btnRadar.className = 'btn btn-red';
+                    } else {
+                        btnRadar.innerText = 'START';
+                        btnRadar.className = 'btn btn-purple-radar';
+                    }
+                }
+
+                const btnKite = document.getElementById('btn-kite');
+                if (btnKite) {
+                    btnKite.disabled = false;
+                    if (d.kite_engine && d.kite_engine !== 'stopped') {
+                        btnKite.innerText = 'STOP';
+                        btnKite.className = 'btn btn-red';
+                    } else {
+                        btnKite.innerText = 'START';
+                        btnKite.className = 'btn btn-green';
+                    }
+                }
+
                 // Update Master Buttons based on status
                 const btnStartAll = document.getElementById('btn-start-all');
                 const btnStopAll = document.getElementById('btn-stop-all');
-                const anyStopped = !d.fyers || !d.log;
-                const allStopped = !d.fyers && !d.log;
+                const anyStopped = !d.fyers || !d.log || !d.radar;
+                const allStopped = !d.fyers && !d.log && !d.radar;
                 
                 if (btnStartAll) {
                     btnStartAll.disabled = !anyStopped;
@@ -104,6 +159,8 @@
                 endpoint = isRunning ? '/stop_fyers' : '/start_fyers';
             } else if (engine === 'log') {
                 endpoint = isRunning ? '/stop_tv_log' : '/start_tv_log';
+            } else if (engine === 'radar') {
+                endpoint = isRunning ? '/stop_radar' : '/start_radar';
             }
             
             const btn = document.getElementById(`btn-${engine}`);
@@ -124,10 +181,67 @@
                 });
         }
 
+        function toggleKiteEngine() {
+            const isRunning = engineStatus['kite'];
+            if (isRunning) {
+                const btn = document.getElementById('btn-kite');
+                if (btn) {
+                    btn.innerText = 'WAIT...';
+                    btn.disabled = true;
+                }
+                fetch('/stop_kite_engine?ajax=1')
+                    .then(r => r.json())
+                    .then(d => {
+                        showToast(d.message, d.status);
+                        updateStatus();
+                    })
+                    .catch(err => {
+                        showToast('Action failed: ' + err.message, 'error');
+                        updateStatus();
+                    });
+            } else {
+                const confirmLive = confirm("🚨 Start Zerodha Kite Intraday Engine?\n\n- Click OK to start in LIVE MODE (Real order execution).\n- Click Cancel to start in DRY RUN (Simulation) Mode.");
+                const mode = confirmLive ? 'live' : 'dry';
+                
+                const btn = document.getElementById('btn-kite');
+                if (btn) {
+                    btn.innerText = 'WAIT...';
+                    btn.disabled = true;
+                }
+                fetch(`/start_kite_engine?mode=${mode}&ajax=1`)
+                    .then(r => r.json())
+                    .then(d => {
+                        showToast(d.message, d.status);
+                        updateStatus();
+                    })
+                    .catch(err => {
+                        showToast('Action failed: ' + err.message, 'error');
+                        updateStatus();
+                    });
+            }
+        }
+
+        function switchChart(symbol) {
+            showToast('Switching active TradingView tab to ' + symbol + '...', 'success');
+            fetch('/api/radar/switch', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({symbol: symbol})
+            }).then(r => r.json()).then(d => {
+                if (d.status === 'ok') {
+                    showToast('Successfully switched chart!', 'success');
+                } else {
+                    showToast('Failed to switch chart: ' + d.message, 'error');
+                }
+            }).catch(e => {
+                showToast('Network error during chart switch: ' + e.message, 'error');
+            });
+        }
+
         function startAll() {
             const btn = document.getElementById('btn-start-all');
             if (btn) btn.disabled = true;
-            fetch('/start_all?ajax=1')
+            fetch('/start?ajax=1')
                 .then(r => r.json())
                 .then(d => {
                     showToast(d.message, d.status);
@@ -158,6 +272,70 @@
                 });
         }
 
+        let activeKiteTab = 'positions';
+        function switchKiteTab(tab) {
+            activeKiteTab = tab;
+            const btnPos = document.getElementById('tab-btn-positions');
+            const btnOrd = document.getElementById('tab-btn-orders');
+            const panePos = document.getElementById('kite-tab-positions');
+            const paneOrd = document.getElementById('kite-tab-orders');
+            
+            if (!btnPos || !btnOrd || !panePos || !paneOrd) return;
+            
+            if (tab === 'positions') {
+                btnPos.style.background = 'rgba(255, 255, 255, 0.08)';
+                btnPos.style.color = '#fff';
+                btnOrd.style.background = 'transparent';
+                btnOrd.style.color = '#8b949e';
+                panePos.style.display = 'block';
+                paneOrd.style.display = 'none';
+            } else {
+                btnOrd.style.background = 'rgba(255, 255, 255, 0.08)';
+                btnOrd.style.color = '#fff';
+                btnPos.style.background = 'transparent';
+                btnPos.style.color = '#8b949e';
+                panePos.style.display = 'none';
+                paneOrd.style.display = 'block';
+            }
+        }
+
+        function triggerKitePanic() {
+            if (!confirm("⚠️ WARNING: You are triggering an EMERGENCY PANIC SQUARE-OFF!\n\nThis will immediately cancel all pending Zerodha orders and close all open positions at market price.\n\nAre you absolutely sure you want to proceed?")) {
+                return;
+            }
+            
+            const btn = document.getElementById('btn-kite-panic');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<span>⏳</span> EXITING...';
+            }
+            
+            fetch('/api/kite/panic', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' }
+            })
+            .then(r => r.json())
+            .then(d => {
+                if (d.status === 'success') {
+                    showToast(d.message, 'success');
+                } else if (d.status === 'partial') {
+                    showToast(d.message, 'warning');
+                } else {
+                    showToast(d.message || "Panic exit failed.", 'error');
+                }
+            })
+            .catch(e => {
+                console.error("Panic error:", e);
+                showToast("System error triggering panic exit.", 'error');
+            })
+            .finally(() => {
+                if (btn) {
+                    btn.disabled = false;
+                    btn.innerHTML = '<span>🚨</span> PANIC EXIT';
+                }
+            });
+        }
+
         // Live Polls (Telemetry Updates)
         setInterval(function(){
             fetch('/api/data').then(r => r.json()).then(d => {
@@ -165,6 +343,68 @@
             });
             
             updateStatus();
+
+            if (kiteActive) {
+                // Poll Zerodha Kite Orders
+                fetch('/api/kite/orders').then(r => r.json()).then(data => {
+                    const tbody = document.getElementById('kite-orders-rows');
+                    if (!tbody) return;
+                    if (!data.orders || data.orders.length === 0) {
+                        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:20px; color:#8b949e;">No orders placed today.</td></tr>`;
+                        return;
+                    }
+                    let html = '';
+                    data.orders.forEach(o => {
+                        const buySellClass = o.transaction_type === 'BUY' ? 'status-buy' : 'status-sell';
+                        const statusClass = o.status === 'COMPLETE' ? 'status-complete' : (o.status === 'REJECTED' || o.status === 'CANCELLED' ? 'status-rejected' : 'status-pending');
+                        const formattedPrice = o.price > 0 ? `₹${o.price.toFixed(2)}` : 'Market';
+                        const formattedTrigger = o.trigger_price > 0 ? `₹${o.trigger_price.toFixed(2)}` : '—';
+                        html += `<tr>
+                            <td style="font-family: monospace; font-size: 0.85em; color: #8b949e; padding: 10px;">${o.order_id}</td>
+                            <td style="font-weight: 600; color: #c9d1d9; padding: 10px;">${o.symbol}</td>
+                            <td style="padding: 10px;"><span class="badge ${buySellClass}">${o.transaction_type}</span></td>
+                            <td style="text-align: center; color: #c9d1d9; padding: 10px;">${o.quantity}</td>
+                            <td style="color: #c9d1d9; padding: 10px;">${formattedPrice}</td>
+                            <td style="color: #c9d1d9; padding: 10px;">${formattedTrigger}</td>
+                            <td style="padding: 10px;">
+                                <span class="badge ${statusClass}">${o.status}</span>
+                                ${o.status_message ? `<span style="display:block; font-size:0.72em; color:#ff7b72; margin-top:2px;">${o.status_message}</span>` : ''}
+                            </td>
+                        </tr>`;
+                    });
+                    tbody.innerHTML = html;
+                }).catch(e => console.error("Kite orders error:", e));
+
+                // Poll Zerodha Kite Positions
+                fetch('/api/kite/positions').then(r => r.json()).then(data => {
+                    const tbody = document.getElementById('kite-positions-rows');
+                    if (!tbody) return;
+                    if (!data.positions || data.positions.length === 0) {
+                        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:20px; color:#8b949e;">No active positions today.</td></tr>`;
+                        return;
+                    }
+                    let html = '';
+                    data.positions.forEach(p => {
+                        const buySellClass = p.quantity >= 0 ? 'status-buy' : 'status-sell';
+                        const pnlClass = p.pnl >= 0 ? 'pnl-profit' : 'pnl-loss';
+                        const formattedPnl = p.pnl >= 0 ? `+₹${p.pnl.toFixed(2)}` : `-₹${Math.abs(p.pnl).toFixed(2)}`;
+                        html += `<tr>
+                            <td style="font-weight: 600; color: #c9d1d9; padding: 10px;">${p.symbol}</td>
+                            <td style="padding: 10px;"><span class="badge ${buySellClass}">${p.quantity >= 0 ? 'LONG' : 'SHORT'}</span></td>
+                            <td style="text-align: center; color: #c9d1d9; padding: 10px;">${Math.abs(p.quantity)}</td>
+                            <td style="color: #c9d1d9; padding: 10px;">₹${p.average_price.toFixed(2)}</td>
+                            <td style="color: #c9d1d9; padding: 10px;">₹${p.last_price.toFixed(2)}</td>
+                            <td class="${pnlClass}" style="font-weight: 700; padding: 10px;">${formattedPnl}</td>
+                        </tr>`;
+                    });
+                    tbody.innerHTML = html;
+                }).catch(e => console.error("Kite positions error:", e));
+            } else {
+                const tbodyOrd = document.getElementById('kite-orders-rows');
+                const tbodyPos = document.getElementById('kite-positions-rows');
+                if (tbodyOrd) tbodyOrd.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:20px; color:#8b949e;">[ Kite API Connection Inactive. Please authorize in sidebar. ]</td></tr>`;
+                if (tbodyPos) tbodyPos.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:20px; color:#8b949e;">[ Kite API Connection Inactive. Please authorize in sidebar. ]</td></tr>`;
+            }
             
             fetch('/api/logs').then(r => r.json()).then(data => {
                 const con = document.getElementById('console-output');
@@ -173,7 +413,38 @@
                 con.innerText = data.logs || "> Awaiting telemetry feed from satellite uplink...";
                 if (wasAtBottom) con.scrollTop = con.scrollHeight;
             });
+
+            // Poll Nifty 50 Spike Alerts
+            fetch('/api/radar/alerts').then(r => r.json()).then(data => {
+                const container = document.getElementById('radar-alerts-list');
+                if (!container) return;
+                
+                if (data.length === 0) {
+                    container.innerHTML = '<div class="empty-radar-msg">[ Awaiting Nifty 50 momentum spikes... ]</div>';
+                    return;
+                }
+                
+                let html = '';
+                data.forEach(alert => {
+                    const deltaClass = alert.price_change >= 0 ? 'up' : 'down';
+                    const sign = alert.price_change >= 0 ? '+' : '';
+                    html += `
+                        <div class="radar-alert-card" onclick="switchChart('${alert.symbol}')">
+                            <div class="radar-alert-left">
+                                <span class="symbol">${alert.symbol}</span>
+                                <span class="time">${alert.timestamp} | Price: ₹${alert.ltp}</span>
+                            </div>
+                            <div class="radar-alert-right">
+                                <span class="radar-badge-vol">${alert.volume_ratio}x Vol</span>
+                                <span class="radar-delta-pct ${deltaClass}">${sign}${alert.price_change}%</span>
+                            </div>
+                        </div>
+                    `;
+                });
+                container.innerHTML = html;
+            });
         }, 2000);
+
 
         // Search & Auto-complete
         function searchStocks(q) {
@@ -262,7 +533,7 @@
                 <div class="card-header">
                     <div class="header-title">
                         <span class="icon">📊</span>
-                        <h3>Live Signal Grid</h3>
+                        <h3>Live Signal Grid <span class="badge" style="background: rgba(63, 185, 80, 0.15); color: #3fb950; border: 1px solid rgba(63, 185, 80, 0.3); font-size: 0.75em; padding: 2px 6px; border-radius: 6px; margin-left: 8px;">FYERS ENGINE</span></h3>
                     </div>
                     <span class="pulse-indicator">● LIVE FEED</span>
                 </div>
@@ -322,6 +593,69 @@
                 </div>
             </div>
 
+            <!-- Kite Live Terminal -->
+            <div class="card glassmorphism kite-terminal-card" style="margin-bottom: 20px;">
+                <div class="card-header" style="border-bottom: 1px solid rgba(255, 255, 255, 0.08); padding-bottom: 12px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                    <div class="header-title">
+                        <span class="icon">💼</span>
+                        <h3>Zerodha Kite Live Terminal</h3>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <button id="btn-kite-panic" class="btn btn-red" onclick="triggerKitePanic()" style="padding: 6px 14px; font-size: 0.85em; font-weight: 700; background: linear-gradient(135deg, #ef4444, #dc2626); color: white; border: none; border-radius: 4px; cursor: pointer; box-shadow: 0 0 12px rgba(239, 68, 68, 0.3); transition: all 0.2s ease; display: inline-flex; align-items: center; gap: 4px;">
+                            <span>🚨</span> PANIC EXIT
+                        </button>
+                        <div class="tab-buttons" style="display: flex; gap: 8px; background: rgba(0, 0, 0, 0.2); padding: 4px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.05);">
+                            <button id="tab-btn-positions" class="btn tab-btn active" onclick="switchKiteTab('positions')" style="padding: 6px 14px; font-size: 0.85em; background: rgba(255, 255, 255, 0.08); color: white; border: none; border-radius: 4px; cursor: pointer;">Active Positions</button>
+                            <button id="tab-btn-orders" class="btn tab-btn" onclick="switchKiteTab('orders')" style="padding: 6px 14px; font-size: 0.85em; background: transparent; color: #8b949e; border: none; border-radius: 4px; cursor: pointer;">Order Book</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="card-body" style="padding: 15px 0 0 0; max-height: 380px; overflow-y: auto;">
+                    <!-- Active Positions Pane -->
+                    <div id="kite-tab-positions" style="display: block;">
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.08); text-align: left; font-size: 0.85em; color: #8b949e;">
+                                    <th style="padding: 10px;">Symbol</th>
+                                    <th style="padding: 10px;">Type</th>
+                                    <th style="padding: 10px; text-align: center;">Qty</th>
+                                    <th style="padding: 10px;">Avg Price</th>
+                                    <th style="padding: 10px;">LTP</th>
+                                    <th style="padding: 10px;">PnL</th>
+                                </tr>
+                            </thead>
+                            <tbody id="kite-positions-rows">
+                                <tr>
+                                    <td colspan="6" style="text-align: center; padding: 20px; color: #8b949e;">[ Awaiting account synchronization... ]</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <!-- Order Book Pane -->
+                    <div id="kite-tab-orders" style="display: none;">
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.08); text-align: left; font-size: 0.85em; color: #8b949e;">
+                                    <th style="padding: 10px;">Order ID</th>
+                                    <th style="padding: 10px;">Symbol</th>
+                                    <th style="padding: 10px;">Type</th>
+                                    <th style="padding: 10px; text-align: center;">Qty</th>
+                                    <th style="padding: 10px;">Price</th>
+                                    <th style="padding: 10px;">Trigger</th>
+                                    <th style="padding: 10px;">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="kite-orders-rows">
+                                <tr>
+                                    <td colspan="7" style="text-align: center; padding: 20px; color: #8b949e;">[ Awaiting account synchronization... ]</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
             <!-- Console Window -->
             <div class="card glassmorphism console-card">
                 <div class="card-header">
@@ -346,7 +680,7 @@
                     </div>
                 </div>
                 <div class="control-list">
-                    <div class="control-row">
+                    <div class="control-row" style="display: none;">
                         <div class="label-area">
                             <span id="dot-tv" class="status-dot"></span>
                             <span>TradingView App</span>
@@ -361,13 +695,29 @@
                         </div>
                         <button id="btn-fyers" onclick="toggleEngine('fyers')" class="btn btn-green" style="min-width: 80px;">START</button>
                     </div>
-                    
+
                     <div class="control-row">
+                        <div class="label-area">
+                            <span id="dot-kite" class="status-dot"></span>
+                            <span>Kite Intraday Engine</span>
+                        </div>
+                        <button id="btn-kite" onclick="toggleKiteEngine()" class="btn btn-green" style="min-width: 80px;">START</button>
+                    </div>
+                    
+                    <div class="control-row" style="display: none;">
                         <div class="label-area">
                             <span id="dot-log" class="status-dot"></span>
                             <span>TV Price Logs</span>
                         </div>
                         <button id="btn-log" onclick="toggleEngine('log')" class="btn btn-purple" style="min-width: 80px;">START</button>
+                    </div>
+
+                    <div class="control-row">
+                        <div class="label-area">
+                            <span id="dot-radar" class="status-dot"></span>
+                            <span>📡 Spike Radar</span>
+                        </div>
+                        <button id="btn-radar" onclick="toggleEngine('radar')" class="btn btn-purple-radar" style="min-width: 80px;">START</button>
                     </div>
                     
                     <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 15px;">
@@ -375,14 +725,29 @@
                             <button id="btn-start-all" onclick="startAll()" class="btn btn-green" style="font-weight: 700;">⚡ START ALL</button>
                             <button id="btn-stop-all" onclick="stopAll()" class="btn btn-red" style="font-weight: 700;">🛑 STOP ALL</button>
                         </div>
-                        <a href="/sync_tabs" class="btn btn-gradient" style="width: auto;">🔄 SYNC DUAL-TIMEFRAME TABS</a>
+                        <a href="/sync_tabs" class="btn btn-gradient" style="width: auto; display: none;">🔄 SYNC DUAL-TIMEFRAME TABS</a>
                     </div>
                     
                     <a href="/clear_logs" class="btn btn-gray" style="margin-top: 10px;">🧹 WIPE ALL LOGS</a>
                 </div>
             </div>
 
-            <!-- Authorization Card -->
+            <!-- Momentum Spike Radar Panel -->
+            <div class="card glassmorphism radar-card">
+                <div class="card-header">
+                    <div class="header-title">
+                        <span class="icon">📡</span>
+                        <h3>Momentum Spike Radar</h3>
+                    </div>
+                    <span class="pulse-indicator radar-pulse">● SCANNING</span>
+                </div>
+                <div class="radar-alert-list" id="radar-alerts-list">
+                    <div class="empty-radar-msg">[ Awaiting Nifty 50 momentum spikes... ]</div>
+                </div>
+            </div>
+
+
+            <!-- Authorization Card (Fyers) -->
             <div class="card glassmorphism auth-card">
                 <div class="card-header">
                     <div class="header-title">
@@ -405,6 +770,47 @@
                         <div class="status-message success">
                             <span class="status-indicator"></span>
                             <p>TOKEN ACTIVE (Good for today)</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Authorization Card (Zerodha Kite) -->
+            <div class="card glassmorphism auth-card">
+                <div class="card-header">
+                    <div class="header-title">
+                        <span class="icon">🪁</span>
+                        <h3>Kite API Authorization</h3>
+                    </div>
+                </div>
+                <div class="auth-body">
+                    {% if kite_needs_login %}
+                        <div class="status-message error">
+                            <span class="status-indicator"></span>
+                            <p>KITE CONNECT INACTIVE</p>
+                        </div>
+                        <a href="{{ kite_auth_url }}" target="_blank" class="btn btn-blue" style="width:100%; box-sizing:border-box; text-align: center; display: inline-block; margin-bottom: 10px;">Authorize Zerodha Kite</a>
+                        <form action="/kite_auth" method="POST" class="auth-form">
+                            <input type="text" name="request_token_input" placeholder="Paste Request Token or Redirect URL..." required>
+                            <button type="submit" class="btn btn-green" style="width:100%;">Exchange Request Token</button>
+                        </form>
+                    {% else %}
+                        <div class="status-message success" style="margin-bottom: 15px;">
+                            <span class="status-indicator"></span>
+                            <p>KITE CONNECT ACTIVE</p>
+                        </div>
+                        <div class="margin-container" style="padding: 12px; background: rgba(255,255,255,0.05); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); margin-top: 10px;">
+                            <span style="font-size: 0.8rem; color: rgba(255,255,255,0.6); display: block; text-transform: uppercase; letter-spacing: 1px;">Live Buying Power (Net)</span>
+                            <span id="kite-margin-value" style="font-size: 1.5rem; font-weight: 700; color: #10b981; display: block; margin-top: 4px;">
+                                {{ kite_margin.net if kite_margin else 'Loading...' }}
+                            </span>
+                            <span id="kite-margin-breakdown" style="font-size: 0.72rem; color: rgba(255,255,255,0.4); display: block; margin-top: 4px; font-family: monospace;">
+                                {% if kite_margin %}
+                                    Cash: {{ kite_margin.cash }} | Collateral: {{ kite_margin.collateral }}
+                                {% else %}
+                                    Awaiting breakdown data...
+                                {% endif %}
+                            </span>
                         </div>
                     {% endif %}
                 </div>
