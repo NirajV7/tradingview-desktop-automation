@@ -43,8 +43,9 @@ from trade_setup.engine.telemetry import (
 from trade_setup.engine.costs import fetch_transaction_costs
 from trade_setup.engine.journal import log_trade_to_journal
 from trade_setup.engine.rules import evaluate_live_rules
-from trade_setup.engine.risk import execute_order_disciplines
-from trade_setup.engine.orders import place_kite_bracket_defense
+from trade_setup.engine.rules_sell import evaluate_live_sell_rules
+from trade_setup.engine.risk import execute_order_disciplines, execute_sell_order_disciplines
+from trade_setup.engine.orders import place_kite_bracket_defense, place_kite_sell_bracket_defense
 from trade_setup.engine.auditor import audit_active_trades
 
 class KiteExecutionEngine:
@@ -58,8 +59,11 @@ class KiteExecutionEngine:
     fetch_transaction_costs = fetch_transaction_costs
     log_trade_to_journal = log_trade_to_journal
     evaluate_live_rules = evaluate_live_rules
+    evaluate_live_sell_rules = evaluate_live_sell_rules
     execute_order_disciplines = execute_order_disciplines
+    execute_sell_order_disciplines = execute_sell_order_disciplines
     place_kite_bracket_defense = place_kite_bracket_defense
+    place_kite_sell_bracket_defense = place_kite_sell_bracket_defense
     audit_active_trades = audit_active_trades
 
     def __init__(self, dry_run=True):
@@ -256,6 +260,25 @@ class KiteExecutionEngine:
                 return parsed
         return []
 
+    def get_symbol_direction(self, symbol):
+        """Returns 'BUY' or 'SELL' for a given symbol by reading the watchlist config."""
+        if os.path.exists(config.WATCHLIST_FILE):
+            try:
+                with open(config.WATCHLIST_FILE, 'r') as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        for s in data.get("sell", []):
+                            ticker = s.split(":")[1].split("-EQ")[0] if ":" in s else s.split("-EQ")[0]
+                            if ticker == symbol:
+                                return "SELL"
+                        for s in data.get("buy", []):
+                            ticker = s.split(":")[1].split("-EQ")[0] if ":" in s else s.split("-EQ")[0]
+                            if ticker == symbol:
+                                return "BUY"
+            except Exception as e:
+                print(f"⚠️ Error checking symbol direction: {e}")
+        return "BUY"
+
     def run_polling_loop(self):
         """Active scanner that continuously audits watchlist symbols against filters."""
         print("\n📡 Start active scanning. Press Ctrl+C to terminate.")
@@ -283,10 +306,17 @@ class KiteExecutionEngine:
                         if hasattr(self, 'completed_trades_today') and symbol in self.completed_trades_today:
                             continue
                         
-                        status = self.evaluate_live_rules(symbol)
+                        direction = self.get_symbol_direction(symbol)
+                        if direction == "SELL":
+                            status = self.evaluate_live_sell_rules(symbol)
+                            prefix = "[SELL-SCAN]"
+                        else:
+                            status = self.evaluate_live_rules(symbol)
+                            prefix = "[BUY-SCAN]"
+
                         # Suppress repeating logs to keep execution clear
-                        if "FAILED" not in str(status):
-                            print(f"🔎 Scanning {symbol}: {status}")
+                        if status and "FAILED" not in str(status):
+                            print(f"🔎 {prefix} {symbol}: {status}")
                 except Exception as e:
                     print(f"⚠️ Error inside polling loop iteration: {e}")
                 

@@ -34,3 +34,8 @@
 * **Option C: High-Volume "Spike & Pullback" Strategy**
   * Monitor stocks that register a massive volume spike, wait for them to pull back to the 5m EMA20/VWAP with low volume and a cooled RSI (50-60), and buy the touchback with a tight stop below the spike candle low.
 
+## 4. Live Session Observations & Tweaks (Today's Checklist)
+* [x] **Tweak Tick Spread Skew Gate (Option A):** Lowered the order flow imbalance ratio threshold from `1.3` to `1.15` for both BUY and SELL sides in `rules.py` and `rules_sell.py`.
+* [ ] **Monitor Execution Frequency:** Check if the relaxed `1.15` tick spread skew gate allows momentum breakouts to execute correctly today without getting stuck on noisy counter-ticks.
+* [ ] **RSI Boundary Audit:** If breakouts are still failing despite clear directional momentum, check if they are hitting the strict RSI upper/lower boundaries (70 for buys, 30 for sells) right on the breakout candle.
+

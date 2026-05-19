@@ -1,8 +1,8 @@
 from datetime import datetime
 import config
 
-def evaluate_live_rules(self, symbol):
-    """Runs the sequential intraday checks for a watchlist stock."""
+def evaluate_live_sell_rules(self, symbol):
+    """Runs the sequential intraday breakdown checks for a short watchlist stock."""
     # 1. Fetch live telemetry metrics calculated by indicator_engine.py
     try:
         latest_row = None
@@ -64,23 +64,23 @@ def evaluate_live_rules(self, symbol):
     orb_high = self.orb_ranges[symbol]["high"]
     orb_low = self.orb_ranges[symbol]["low"]
 
-    # Check 2: Intraday VWAP Anchor
-    if price <= vwap:
-        return f"FAILED - Price ({price}) is below VWAP ({vwap})"
+    # Check 2: Intraday VWAP Anchor (Price must be below VWAP for Short Setup)
+    if price >= vwap:
+        return f"FAILED - Price ({price}) is above VWAP ({vwap})"
 
-    # Check 3: Intraday EMA Alignment
-    if not (ema20 > ema50 and price > ema200):
+    # Check 3: Intraday EMA Alignment (EMA20 < EMA50 and Price < EMA200 for Short Setup)
+    if not (ema20 < ema50 and price < ema200):
         return f"FAILED - EMA structure not aligned (EMA20: {ema20}, EMA50: {ema50}, Price: {price})"
 
-    # Check 4: RSI Momentum Guard
-    if rsi < 50 or rsi > 70:
-        return f"FAILED - RSI ({rsi}) not in neutral-bullish range (50-70)"
+    # Check 4: RSI Momentum Guard (RSI between 30 and 50 for Short Setup)
+    if rsi < 30 or rsi > 50:
+        return f"FAILED - RSI ({rsi}) not in neutral-bearish range (30-50)"
 
-    # Check 5: The Breakout Trigger
-    if price <= orb_high:
-        return f"FAILED - Price ({price}) has not broken above 15m High ({orb_high})"
+    # Check 5: The Breakdown Trigger (Price must break below 15m Low)
+    if price >= orb_low:
+        return f"FAILED - Price ({price}) has not broken below 15m Low ({orb_low})"
 
-    # Check 6: Breakout Volume Expansion (1.5x of 15m clock-aligned baseline)
+    # Check 6: Breakdown Volume Expansion (1.5x of 15m clock-aligned baseline)
     ts_str = latest.get("timestamp", "")
     dt_val = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
     minute = dt_val.minute
@@ -111,15 +111,15 @@ def evaluate_live_rules(self, symbol):
         if avg_vol_5m > 0 and latest_vol < (avg_vol_5m * 1.5):
             return f"FAILED - Breakout on low 5m volume ({latest_vol:.0f} vs 1.5x Avg: {avg_vol_5m * 1.5:.0f})"
 
-    # Check 7: Micro Tick Spread Skew (1.15x buyer dominance over last 50 ticks)
+    # Check 7: Micro Tick Spread Skew (1.15x seller dominance over last 50 ticks)
     buy_vol, sell_vol = self.get_tick_spread_volume(symbol)
-    if sell_vol > 0:
-        ratio = buy_vol / sell_vol
+    if buy_vol > 0:
+        ratio = sell_vol / buy_vol
         if ratio < 1.15:
-            return f"FAILED - Tick spread skew not dominant (Buyer/Seller Ratio: {ratio:.2f} < 1.15)"
+            return f"FAILED - Tick spread skew not dominant (Seller/Buyer Ratio: {ratio:.2f} < 1.15)"
     else:
         ratio = 1.0
 
-    # All Gates Passed -> TRIGGER BUY!
-    self.execute_order_disciplines(symbol, price, orb_low)
-    return "🟢 CONVERGENCE PERFECT - BUY TRIGGERED"
+    # All Gates Passed -> TRIGGER SELL!
+    self.execute_sell_order_disciplines(symbol, price, orb_high)
+    return "🟢 CONVERGENCE PERFECT - SELL TRIGGERED"
