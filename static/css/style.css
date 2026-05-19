@@ -384,6 +384,13 @@ body {
     width: 100%;
 }
 
+.btn-outline-green {
+    background: transparent;
+    border: 1px solid var(--accent-green);
+    color: var(--accent-green);
+    width: 100%;
+}
+
 .btn:hover {
     filter: brightness(1.2);
     box-shadow: 0 0 15px rgba(59, 130, 246, 0.2);
@@ -393,6 +400,12 @@ body {
     background: var(--accent-red);
     color: white;
     box-shadow: 0 0 15px var(--accent-red-glow);
+}
+
+.btn-outline-green:hover {
+    background: var(--accent-green);
+    color: white;
+    box-shadow: 0 0 15px var(--accent-green-glow);
 }
 
 .action-grid {
@@ -651,4 +664,261 @@ input[type="text"]:focus {
 .search-card {
     position: relative;
     z-index: 100;
+}
+
+/* -------------------------------------------------------------
+ * MOMENTUM RADAR STYLES
+ * ------------------------------------------------------------- */
+.radar-card {
+    border-color: rgba(59, 130, 246, 0.15);
+}
+
+.radar-card:hover {
+    border-color: rgba(0, 230, 118, 0.4);
+    box-shadow: 0 15px 45px rgba(0, 230, 118, 0.08);
+}
+
+.pulse-indicator.radar-pulse {
+    color: #00E676;
+    background: rgba(0, 230, 118, 0.1);
+    border-color: rgba(0, 230, 118, 0.3);
+}
+
+.radar-alert-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 380px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+
+.radar-alert-list::-webkit-scrollbar {
+    width: 4px;
+}
+
+.radar-alert-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+}
+
+.radar-alert-card {
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.04);
+    border-radius: 12px;
+    padding: 12px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    animation: alertSlideIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.radar-alert-card:hover {
+    background: rgba(59, 130, 246, 0.08);
+    border-color: rgba(59, 130, 246, 0.3);
+    transform: translateY(-2px);
+    box-shadow: 0 8px 20px rgba(0,0,0,0.4);
+}
+
+@keyframes alertSlideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.radar-alert-left {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.radar-alert-left .symbol {
+    font-weight: 700;
+    color: #60a5fa;
+    font-size: 0.95rem;
+    font-family: var(--font-mono);
+}
+
+.radar-alert-left .time {
+    font-size: 0.72rem;
+    color: var(--text-muted);
+}
+
+.radar-alert-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+}
+
+.radar-badge-vol {
+    background: rgba(0, 230, 118, 0.15);
+    border: 1px solid rgba(0, 230, 118, 0.4);
+    color: #00E676;
+    font-size: 0.72rem;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-family: var(--font-mono);
+    text-shadow: 0 0 8px rgba(0, 230, 118, 0.2);
+}
+
+.radar-delta-pct {
+    font-size: 0.78rem;
+    font-weight: 700;
+    font-family: var(--font-mono);
+}
+
+.radar-delta-pct.up {
+    color: #34d399;
+}
+
+.radar-delta-pct.down {
+    color: #f87171;
+}
+
+.empty-radar-msg {
+    text-align: center;
+    color: var(--text-muted);
+    font-size: 0.85rem;
+    font-style: italic;
+    padding: 40px 0;
+}
+
+/* Custom indicator color for start button nifty radar */
+.btn-purple-radar {
+    background: linear-gradient(135deg, #1d4ed8, #059669);
+    box-shadow: 0 0 10px rgba(0, 230, 118, 0.1);
+}
+
+/* -------------------------------------------------------------
+ * KITE LIVE TERMINAL ACCENTS
+ * ------------------------------------------------------------- */
+.status-buy {
+    background: rgba(16, 185, 129, 0.15) !important;
+    color: #34d399 !important;
+    border: 1px solid rgba(16, 185, 129, 0.3) !important;
+}
+
+.status-sell {
+    background: rgba(239, 68, 68, 0.15) !important;
+    color: #f87171 !important;
+    border: 1px solid rgba(239, 68, 68, 0.3) !important;
+}
+
+.status-complete {
+    background: rgba(16, 185, 129, 0.2) !important;
+    color: #34d399 !important;
+    border: 1px solid rgba(16, 185, 129, 0.4) !important;
+}
+
+.status-rejected, .status-cancelled {
+    background: rgba(239, 68, 68, 0.2) !important;
+    color: #f87171 !important;
+    border: 1px solid rgba(239, 68, 68, 0.4) !important;
+}
+
+.status-pending {
+    background: rgba(245, 158, 11, 0.15) !important;
+    color: #f59e0b !important;
+    border: 1px solid rgba(245, 158, 11, 0.3) !important;
+}
+
+.pnl-profit {
+    color: #10b981 !important;
+}
+
+.pnl-loss {
+    color: #ef4444 !important;
+}
+
+.tab-btn {
+    font-family: var(--font-sans);
+    outline: none;
+    transition: all 0.2s ease;
+}
+
+.tab-btn:hover {
+    color: #fff !important;
+    background: rgba(255, 255, 255, 0.04) !important;
+}
+
+.tab-btn.active {
+    background: rgba(255, 255, 255, 0.08) !important;
+    color: #fff !important;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) !important;
+}
+
+@keyframes flash-warn {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 0.6; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.2); }
+}
+
+@keyframes gold-pulse {
+    0%, 100% {
+        box-shadow: 0 0 6px rgba(245, 158, 11, 0.5);
+        background: linear-gradient(90deg, #f59e0b, #d97706);
+    }
+    50% {
+        box-shadow: 0 0 18px rgba(245, 158, 11, 1.0);
+        background: linear-gradient(90deg, #fbbf24, #f59e0b);
+    }
+}
+
+
+/* SL Slider Range Input Styling */
+input[type="range"].sl-slider,
+#kite-tab-positions input[type="range"] {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 6px;
+    border-radius: 3px;
+    background: linear-gradient(90deg, #ef4444, #fbbf24, #22c55e);
+    outline: none;
+    cursor: pointer;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    border: 2px solid #fff;
+    cursor: grab;
+    box-shadow: 0 0 8px rgba(251, 191, 36, 0.6), 0 2px 4px rgba(0,0,0,0.4);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+    transform: scale(1.2);
+    box-shadow: 0 0 14px rgba(251, 191, 36, 0.9), 0 2px 6px rgba(0,0,0,0.5);
+}
+
+input[type="range"]::-webkit-slider-thumb:active {
+    cursor: grabbing;
+    transform: scale(1.15);
+}
+
+input[type="range"]::-moz-range-thumb {
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #fbbf24, #f59e0b);
+    border: 2px solid #fff;
+    cursor: grab;
+    box-shadow: 0 0 8px rgba(251, 191, 36, 0.6);
 }

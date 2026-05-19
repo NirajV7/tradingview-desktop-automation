@@ -374,7 +374,7 @@ The FastAPI server is already running in the background. Here is a live visual p
     *   Check the *System Live Console* to see log feeds streaming asynchronously.
 4.  **Sync Tabs:**
     *   Add a custom stock ticker in the *Add Stock* input box (uses auto-complete against Fyers Master DB).
-    *   Click **[SYNC TABS]** to automatically open missing $5m$ and $15m$ interval tabs on your TradingView app.
+    *   Click **[SYNC TABS]** to automatically open missing 5m and 15m interval tabs on your TradingView app.
 
 ---
 

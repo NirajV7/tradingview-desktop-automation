@@ -10,3 +10,7 @@ fyersRequests.log
 engine.log
 watchlist.json
 *.log
+
+# Private Trading Rules, Configurations & Journals
+trade_setup/
+

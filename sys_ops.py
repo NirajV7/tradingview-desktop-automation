@@ -13,6 +13,15 @@ def is_running(script_name):
     except:
         return False
 
+def stop_process(script_name):
+    """Cleanly stops a process containing script_name using pkill."""
+    try:
+        subprocess.run(f"pkill -f '{script_name}'", shell=True)
+        return True
+    except:
+        return False
+
+
 def get_tab_info(ws_url):
     """Interrogates a TradingView tab WebSocket for its current Symbol and Timeframe."""
     try:

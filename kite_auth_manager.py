@@ -160,17 +160,23 @@ def get_kite_positions():
                     kite = KiteConnect(api_key=KITE_API_KEY)
                     kite.set_access_token(access_token)
                     positions = kite.positions()
-                    day_positions = positions.get("day", [])
+                    net_positions = positions.get("net", [])
                     
                     formatted_positions = []
-                    for p in day_positions:
+                    for p in net_positions:
                         formatted_positions.append({
                             "symbol": p.get("tradingsymbol"),
                             "quantity": p.get("quantity"),
                             "average_price": p.get("average_price"),
                             "last_price": p.get("last_price"),
                             "pnl": p.get("pnl"),
-                            "product": p.get("product")
+                            "product": p.get("product"),
+                            "buy_value": p.get("buy_value", 0.0),
+                            "sell_value": p.get("sell_value", 0.0),
+                            "buy_quantity": p.get("buy_quantity", 0),
+                            "sell_quantity": p.get("sell_quantity", 0),
+                            "buy_price": p.get("buy_price", 0.0),
+                            "sell_price": p.get("sell_price", 0.0)
                         })
                     return formatted_positions
             except Exception as e:
@@ -178,6 +184,100 @@ def get_kite_positions():
                 _handle_auth_failure(e)
                 return []
     return []
+
+def place_marketable_limit_exit(kite, exchange, symbol, tx_type, quantity, product, last_price=None):
+    """
+    Submits a marketable LIMIT order to square off positions.
+    Uses provided last_price (from position data) to avoid kite.ltp() permission issues.
+    Applies a 0.5% protective buffer so the limit fills instantly.
+    """
+    try:
+        if last_price is None or last_price <= 0:
+            # Fallback: try ltp() — may fail on basic API plans
+            ltp_key = f"{exchange}:{symbol}"
+            ltp_data = kite.ltp(ltp_key)
+            last_price = ltp_data.get(ltp_key, {}).get("last_price")
+            if not last_price:
+                raise ValueError(f"Could not retrieve last price for {ltp_key}")
+
+        # Apply 0.5% protection buffer for instant fill
+        if tx_type == "SELL":
+            limit_price = round(round((last_price * 0.995) / 0.05) * 0.05, 2)
+        else:
+            limit_price = round(round((last_price * 1.005) / 0.05) * 0.05, 2)
+
+        return kite.place_order(
+            variety="regular",
+            exchange=exchange,
+            tradingsymbol=symbol,
+            transaction_type=tx_type,
+            quantity=quantity,
+            product=product,
+            order_type="LIMIT",
+            price=limit_price
+        )
+    except Exception as e:
+        print(f"⚠️ [MARKETABLE LIMIT EXIT] Failed for {symbol}: {e}")
+        raise
+
+def modify_or_place_sl(symbol, new_trigger_price, sl_order_id=None, quantity=None, transaction_type=None, product=None):
+    """
+    Modify an existing SL order's trigger price, or place a new SL-M order if none exists.
+    trigger_price is rounded to ₹0.05 tick size.
+    """
+    if not KITE_API_KEY or not os.path.exists(KITE_TOKEN_FILE):
+        return {"status": "error", "message": "Kite not authenticated"}
+    
+    with open(KITE_TOKEN_FILE, "r") as f:
+        try:
+            token_data = json.load(f)
+            access_token = token_data.get("access_token")
+            if not access_token:
+                return {"status": "error", "message": "No access token found"}
+            
+            kite = KiteConnect(api_key=KITE_API_KEY)
+            kite.set_access_token(access_token)
+            
+            # Round to ₹0.05 tick
+            rounded_price = round(round(new_trigger_price / 0.05) * 0.05, 2)
+            
+            # User requested exact match for trigger price and limit price (zero buffer)
+            limit_price = rounded_price
+            
+            if sl_order_id:
+                # Modify existing SL order
+                kite.modify_order(
+                    variety="regular",
+                    order_id=sl_order_id,
+                    order_type="SL",
+                    trigger_price=rounded_price,
+                    price=limit_price
+                )
+                print(f"✅ [SL MODIFY] {symbol}: SL moved to ₹{rounded_price} (limit ₹{limit_price})")
+                return {"status": "success", "message": f"SL modified to ₹{rounded_price}", "new_sl": rounded_price}
+            else:
+                # Place new SL limit order
+                if not quantity or not transaction_type or not product:
+                    return {"status": "error", "message": "Missing quantity/transaction_type/product for new SL order"}
+                
+                order_id = kite.place_order(
+                    variety="regular",
+                    exchange="NSE",
+                    tradingsymbol=symbol,
+                    transaction_type=transaction_type,
+                    quantity=abs(quantity),
+                    product=product,
+                    order_type="SL",
+                    trigger_price=rounded_price,
+                    price=limit_price
+                )
+                print(f"✅ [SL PLACED] {symbol}: New SL at ₹{rounded_price} (limit ₹{limit_price})")
+                return {"status": "success", "message": f"New SL placed at ₹{rounded_price}", "new_sl": rounded_price, "order_id": order_id}
+                
+        except Exception as e:
+            print(f"❌ [SL ERROR] {symbol}: {e}")
+            _handle_auth_failure(e)
+            return {"status": "error", "message": str(e)}
 
 def panic_square_off():
     """Cancels all pending orders and market-closes all active positions on Zerodha Kite."""
@@ -218,11 +318,11 @@ def panic_square_off():
             except Exception as e:
                 summary["errors"].append(f"Fetch orders failed: {e}")
                 
-            # 2. Fetch and market-square off all active day positions
+            # 2. Fetch and market-square off all active net positions
             try:
                 positions = kite.positions()
-                day_positions = positions.get("day", [])
-                for p in day_positions:
+                net_positions = positions.get("net", [])
+                for p in net_positions:
                     qty = p.get("quantity", 0)
                     if qty != 0:
                         symbol = p.get("tradingsymbol")
@@ -234,16 +334,8 @@ def panic_square_off():
                         exit_qty = abs(qty)
                         
                         try:
-                            # Submit market order to square off
-                            kite.place_order(
-                                variety="regular",
-                                exchange=exchange,
-                                tradingsymbol=symbol,
-                                transaction_type=tx_type,
-                                quantity=exit_qty,
-                                product=product,
-                                order_type="MARKET"
-                            )
+                            place_marketable_limit_exit(kite, exchange, symbol, tx_type, exit_qty, product,
+                                                        last_price=p.get("last_price", 0.0))
                             summary["squared_positions"] += 1
                         except Exception as e:
                             summary["errors"].append(f"Square off {symbol} failed: {e}")
@@ -294,11 +386,11 @@ def exit_single_position(symbol):
             except Exception as e:
                 print(f"Cancel orders for {symbol} failed: {e}")
                 
-            # 2. Square off day positions for this symbol
+            # 2. Square off net positions for this symbol
             squared = False
             positions = kite.positions()
-            day_positions = positions.get("day", [])
-            for p in day_positions:
+            net_positions = positions.get("net", [])
+            for p in net_positions:
                 if p.get("tradingsymbol") == symbol:
                     qty = p.get("quantity", 0)
                     if qty != 0:
@@ -307,15 +399,8 @@ def exit_single_position(symbol):
                         tx_type = "SELL" if qty > 0 else "BUY"
                         exit_qty = abs(qty)
                         
-                        kite.place_order(
-                            variety="regular",
-                            exchange=exchange,
-                            tradingsymbol=symbol,
-                            transaction_type=tx_type,
-                            quantity=exit_qty,
-                            product=product,
-                            order_type="MARKET"
-                        )
+                        place_marketable_limit_exit(kite, exchange, symbol, tx_type, exit_qty, product,
+                                                    last_price=p.get("last_price", 0.0))
                         squared = True
                         break
             
@@ -325,6 +410,109 @@ def exit_single_position(symbol):
             }
         except Exception as e:
             return {"status": "error", "message": f"Exit failed for {symbol}: {e}"}
+
+def book_half_position(symbol):
+    """Squares off exactly 50% of the position and refactors corresponding pending SL and Target orders."""
+    if not KITE_API_KEY:
+        return {"status": "error", "message": "API key not configured"}
+    if not os.path.exists(KITE_TOKEN_FILE):
+        return {"status": "error", "message": "No active Kite session"}
+        
+    with open(KITE_TOKEN_FILE, "r") as f:
+        try:
+            token_data = json.load(f)
+            access_token = token_data.get("access_token")
+            if not access_token:
+                return {"status": "error", "message": "Access token missing"}
+                
+            kite = KiteConnect(api_key=KITE_API_KEY)
+            kite.set_access_token(access_token)
+            
+            # 1. Fetch active net positions
+            positions = kite.positions()
+            net_positions = positions.get("net", [])
+            target_pos = None
+            for p in net_positions:
+                if p.get("tradingsymbol") == symbol:
+                    target_pos = p
+                    break
+                    
+            if not target_pos:
+                return {"status": "error", "message": f"No active position found for {symbol}"}
+                
+            qty = target_pos.get("quantity", 0)
+            if qty == 0:
+                return {"status": "error", "message": f"Position for {symbol} is already closed"}
+                
+            exchange = target_pos.get("exchange")
+            product = target_pos.get("product")
+            
+            # Calculate booking size
+            half_qty = max(1, abs(qty) // 2)
+            remaining_qty = abs(qty) - half_qty
+            
+            # Direction to exit half
+            exit_tx_type = "SELL" if qty > 0 else "BUY"
+            
+            # 2. Place marketable limit order to square off 50% — pass last_price from position data
+            place_marketable_limit_exit(kite, exchange, symbol, exit_tx_type, half_qty, product,
+                                        last_price=target_pos.get("last_price", 0.0))
+            
+            refactored_orders = []
+            cancelled_orders = 0
+            
+            # 3. Handle refactoring of SL and Target orders
+            if remaining_qty == 0:
+                # If no remaining qty, cancel all open orders for this symbol
+                try:
+                    orders = kite.orders()
+                    open_statuses = ["OPEN", "TRIGGER PENDING", "VALIDATION PENDING", "PUT ORDER REQ RECEIVED"]
+                    for o in orders:
+                        if o.get("tradingsymbol") == symbol and o.get("status") in open_statuses:
+                            kite.cancel_order(variety=o.get("variety"), order_id=o.get("order_id"))
+                            cancelled_orders += 1
+                except Exception as e:
+                    print(f"Cancel orders for {symbol} scale-out fallback failed: {e}")
+            else:
+                # We have a remaining quantity. Refactor open SL and Target orders.
+                try:
+                    orders = kite.orders()
+                    open_statuses = ["OPEN", "TRIGGER PENDING", "VALIDATION PENDING", "PUT ORDER REQ RECEIVED"]
+                    for o in orders:
+                        if o.get("tradingsymbol") == symbol and o.get("status") in open_statuses:
+                            # We only modify orders in the closing direction (opposite of remaining position direction)
+                            if o.get("transaction_type") == exit_tx_type:
+                                otype = o.get("order_type")
+                                if otype in ["SL", "SL-M", "LIMIT"]:
+                                    mod_params = {
+                                        "variety": o.get("variety", "regular"),
+                                        "order_id": o.get("order_id"),
+                                        "quantity": remaining_qty,
+                                        "order_type": otype
+                                    }
+                                    if otype in ["LIMIT", "SL"]:
+                                        mod_params["price"] = o.get("price")
+                                    if otype in ["SL", "SL-M"]:
+                                        mod_params["trigger_price"] = o.get("trigger_price")
+                                        
+                                    kite.modify_order(**mod_params)
+                                    refactored_orders.append(f"{o.get('order_id')} ({otype})")
+                except Exception as e:
+                    print(f"Refactoring orders for {symbol} failed: {e}")
+                    
+            msg = f"Booked 50% ({half_qty} shares) for {symbol}."
+            if remaining_qty == 0:
+                msg += f" Full exit completed. Cancelled {cancelled_orders} pending orders."
+            else:
+                msg += f" Remaining size: {remaining_qty}. Refactored {len(refactored_orders)} orders: {', '.join(refactored_orders)}."
+                
+            return {
+                "status": "success",
+                "message": msg
+            }
+        except Exception as e:
+            return {"status": "error", "message": f"Scale-out failed for {symbol}: {e}"}
+
 
 
 

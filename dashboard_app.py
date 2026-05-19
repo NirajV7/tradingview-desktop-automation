@@ -127,7 +127,8 @@ async def fyers_cache_updater():
     """Background task to refresh Fyers history indicators every 60 seconds."""
     while True:
         try:
-            active_symbols = load_watchlist()
+            watchlist = load_watchlist()
+            active_symbols = watchlist.get("buy", []) + watchlist.get("sell", [])
             if not active_symbols:
                 await asyncio.sleep(5)
                 continue
@@ -170,6 +171,8 @@ async def fyers_cache_updater():
                 # 0. Fetch Daily History and compute ADR (last 30 days is safe to cover 14 trading days)
                 adr_val = None
                 adr_abs_val = None
+                today_high = None
+                today_low = None
                 try:
                     res_d = fyers.history({
                         "symbol": symbol,
@@ -184,6 +187,8 @@ async def fyers_cache_updater():
                         if d_candles:
                             adr_val = calculate_adr_percentage(d_candles, 14)
                             adr_abs_val = calculate_adr_absolute(d_candles, 14)
+                            today_high = d_candles[-1][2]
+                            today_low = d_candles[-1][3]
                 except Exception as e:
                     print(f"[CACHE ERROR] Failed daily ADR for {symbol}: {e}")
 
@@ -201,10 +206,12 @@ async def fyers_cache_updater():
                         candles = res.get("candles", [])
                         if candles:
                             indicators = compute_indicators(candles)
-                            # Inject ADR values into the indicator objects
+                            # Inject ADR values and today's high/low into the indicator objects
                             for item in indicators:
                                 item["adr"] = adr_val
                                 item["adr_abs"] = adr_abs_val
+                                item["today_high"] = today_high
+                                item["today_low"] = today_low
                             new_5m[symbol] = indicators
                             closed_candle = get_last_closed_candle(indicators, 5)
                             if closed_candle:
@@ -226,10 +233,12 @@ async def fyers_cache_updater():
                         candles = res.get("candles", [])
                         if candles:
                             indicators = compute_indicators(candles)
-                            # Inject ADR values into the indicator objects
+                            # Inject ADR values and today's high/low into the indicator objects
                             for item in indicators:
                                 item["adr"] = adr_val
                                 item["adr_abs"] = adr_abs_val
+                                item["today_high"] = today_high
+                                item["today_low"] = today_low
                             new_15m[symbol] = indicators
                             closed_candle = get_last_closed_candle(indicators, 15)
                             if closed_candle:
@@ -263,15 +272,20 @@ app.mount("/static", StaticFiles(directory=os.path.join(config.CWD, "static")), 
 templates = Jinja2Templates(directory=os.path.join(config.CWD, "templates"))
 
 def load_watchlist():
-    """Utility helper to load watchlist array."""
-    symbols_list = []
+    """Utility helper to load watchlist dict {"buy": [], "sell": []}."""
+    data = {"buy": [], "sell": []}
     if os.path.exists(config.WATCHLIST_FILE):
         try:
             with open(config.WATCHLIST_FILE, "r") as f:
-                symbols_list = json.load(f)
+                loaded = json.load(f)
+                if isinstance(loaded, list):
+                    data["buy"] = loaded
+                elif isinstance(loaded, dict):
+                    data["buy"] = loaded.get("buy", [])
+                    data["sell"] = loaded.get("sell", [])
         except Exception as e:
             print(f"Error loading watchlist: {e}")
-    return symbols_list
+    return data
 
 # -------------------------------------------------------------
 # CORE WEB ROUTES
@@ -281,7 +295,11 @@ def load_watchlist():
 async def index(request: Request, msg: str = None, msg_type: str = "success"):
     needs_login, auth_url = auth_manager.check_auth()
     kite_needs_login, kite_auth_url = kite_auth_manager.check_kite_auth()
-    symbols_list = load_watchlist()
+    watchlist = load_watchlist()
+    
+    buy_symbols = watchlist.get("buy", [])
+    sell_symbols = watchlist.get("sell", [])
+    symbols_list = buy_symbols + sell_symbols
     
     current_symbols_text = ", ".join([s.split(":")[1].split("-")[0] if ":" in s else s for s in symbols_list])
     
@@ -298,7 +316,8 @@ async def index(request: Request, msg: str = None, msg_type: str = "success"):
             "kite_needs_login": kite_needs_login,
             "kite_auth_url": kite_auth_url,
             "kite_margin": kite_margin,
-            "symbols_list": symbols_list,
+            "buy_symbols": buy_symbols,
+            "sell_symbols": sell_symbols,
             "current_symbols": current_symbols_text,
             "msg": msg,
             "msg_type": msg_type
@@ -340,10 +359,18 @@ async def kite_auth_post(request_token_input: str = Form(...)):
         return RedirectResponse(url=f"/?msg={quote_plus(message)}&msg_type=error", status_code=303)
 
 @app.get("/clear_watchlist")
-async def clear_watchlist():
+async def clear_watchlist(direction: str = None):
+    watchlist = load_watchlist()
+    if direction in ['buy', 'sell']:
+        watchlist[direction] = []
+        msg = f"{direction.upper()} Watchlist Cleared"
+    else:
+        watchlist = {"buy": [], "sell": []}
+        msg = "All Watchlists Cleared"
+        
     with open(config.WATCHLIST_FILE, "w") as f:
-        json.dump([], f)
-    return RedirectResponse(url="/?msg=Watchlist+Cleared&msg_type=success", status_code=303)
+        json.dump(watchlist, f)
+    return RedirectResponse(url=f"/?msg={quote_plus(msg)}&msg_type=success", status_code=303)
 
 # -------------------------------------------------------------
 # ENGINE CONTROLS & OS SYSTEM ACTIONS
@@ -381,7 +408,7 @@ async def start_fyers(ajax: bool = False):
     else:
         with open(config.ENGINE_LOG, "a") as log_file:
             subprocess.Popen(
-                [config.VENV_PYTHON, os.path.join(config.CWD, "fyers_official_logger.py")], 
+                [config.VENV_PYTHON, "-u", os.path.join(config.CWD, "fyers_official_logger.py")], 
                 cwd=config.CWD, 
                 stdout=log_file, 
                 stderr=log_file
@@ -400,7 +427,7 @@ async def start_kite_engine(mode: str = "dry", ajax: bool = False):
     if sys_ops.is_running("kite_execution_engine.py"):
         return make_response("Kite Intraday Engine is ALREADY RUNNING", "error", ajax)
         
-    cmd = [config.VENV_PYTHON, os.path.join(config.CWD, "trade_setup", "kite_execution_engine.py")]
+    cmd = [config.VENV_PYTHON, "-u", os.path.join(config.CWD, "trade_setup", "kite_execution_engine.py")]
     if mode == "live":
         cmd.append("live")
         
@@ -454,7 +481,8 @@ async def clear_logs():
 
 @app.get("/sync_tabs")
 async def sync_tabs():
-    symbols_list = load_watchlist()
+    watchlist = load_watchlist()
+    symbols_list = watchlist.get("buy", []) + watchlist.get("sell", [])
     if not symbols_list: 
         return RedirectResponse(url="/?msg=Watchlist+is+empty&msg_type=error", status_code=303)
 
@@ -517,7 +545,7 @@ async def start(ajax: bool = False):
     if not sys_ops.is_running("fyers_official_logger.py"):
         with open(config.ENGINE_LOG, "a") as log_file:
             subprocess.Popen(
-                [config.VENV_PYTHON, os.path.join(config.CWD, "fyers_official_logger.py")], 
+                [config.VENV_PYTHON, "-u", os.path.join(config.CWD, "fyers_official_logger.py")], 
                 cwd=config.CWD, 
                 stdout=log_file, 
                 stderr=log_file
@@ -528,7 +556,7 @@ async def start(ajax: bool = False):
     if not sys_ops.is_running("nifty_radar.py"):
         with open(config.ENGINE_LOG, "a") as log_file:
             subprocess.Popen(
-                [config.VENV_PYTHON, os.path.join(config.CWD, "nifty_radar.py")], 
+                [config.VENV_PYTHON, "-u", os.path.join(config.CWD, "nifty_radar.py")], 
                 cwd=config.CWD, 
                 stdout=log_file, 
                 stderr=log_file
@@ -545,7 +573,7 @@ async def start_radar(ajax: bool = False):
     if not sys_ops.is_running("nifty_radar.py"):
         with open(config.ENGINE_LOG, "a") as log_file:
             subprocess.Popen(
-                [config.VENV_PYTHON, os.path.join(config.CWD, "nifty_radar.py")], 
+                [config.VENV_PYTHON, "-u", os.path.join(config.CWD, "nifty_radar.py")], 
                 cwd=config.CWD, 
                 stdout=log_file, 
                 stderr=log_file
@@ -611,13 +639,23 @@ async def search(q: str = ""):
 async def add_symbol(request: Request):
     data = await request.json()
     symbol = data.get('symbol')
+    direction = data.get('direction', 'buy').lower()
+    if direction not in ['buy', 'sell']:
+        direction = 'buy'
     
-    symbols_list = load_watchlist()
+    watchlist = load_watchlist()
     
-    if symbol and symbol not in symbols_list:
-        symbols_list.append(symbol)
+    if symbol:
+        # Move from other list if it is there
+        other_dir = 'sell' if direction == 'buy' else 'buy'
+        if symbol in watchlist.get(other_dir, []):
+            watchlist[other_dir].remove(symbol)
+            
+        if symbol not in watchlist.get(direction, []):
+            watchlist[direction].append(symbol)
+            
         with open(config.WATCHLIST_FILE, "w") as f:
-            json.dump(symbols_list, f)
+            json.dump(watchlist, f)
             
     return JSONResponse({"status": "ok"})
 
@@ -626,12 +664,17 @@ async def remove_symbol(request: Request):
     data = await request.json()
     symbol = data.get('symbol')
     
-    symbols_list = load_watchlist()
+    watchlist = load_watchlist()
     
-    if symbol in symbols_list:
-        symbols_list.remove(symbol)
+    modified = False
+    for direction in ['buy', 'sell']:
+        if symbol in watchlist.get(direction, []):
+            watchlist[direction].remove(symbol)
+            modified = True
+            
+    if modified:
         with open(config.WATCHLIST_FILE, "w") as f:
-            json.dump(symbols_list, f)
+            json.dump(watchlist, f)
             
     return JSONResponse({"status": "ok"})
 
@@ -682,17 +725,22 @@ async def api_kite_positions():
         symbol = p.get("symbol")
         qty = p.get("quantity", 0)
         avg_price = p.get("average_price", 0.0)
+
+        # Use Kite's native live LTP and PnL — computed server-side by Zerodha
         last_price = p.get("last_price", 0.0)
+        pnl_val = p.get("pnl", 0.0)
         
         # 1. Match active orders for target and SL
         target_price = None
         target_order_id = None
+        target_status = None
+        target_order_type = None
+        
         sl_price = None
         sl_order_id = None
+        sl_status = None
+        sl_order_type = None
         
-        # In MIS:
-        # If long (qty > 0): target is a pending SELL LIMIT order, SL is a pending SELL SL/SL-M order
-        # If short (qty < 0): target is a pending BUY LIMIT order, SL is a pending BUY SL/SL-M order
         expected_tx = "SELL" if qty > 0 else "BUY"
         
         for o in orders:
@@ -702,9 +750,13 @@ async def api_kite_positions():
                     if otype == "LIMIT":
                         target_price = o.get("price")
                         target_order_id = o.get("order_id")
+                        target_status = o.get("status")
+                        target_order_type = otype
                     elif otype in ["SL", "SL-M"]:
                         sl_price = o.get("trigger_price") or o.get("price")
                         sl_order_id = o.get("order_id")
+                        sl_status = o.get("status")
+                        sl_order_type = otype
         
         # 2. Get ADR values from Fyers cache
         fyers_sym = None
@@ -715,12 +767,30 @@ async def api_kite_positions():
         
         adr_val = None
         adr_abs_val = None
+        today_high = None
+        today_low = None
         if fyers_sym:
             ind_5m = fyers_cache.data_5m.get(fyers_sym, [])
             if ind_5m:
                 last_ind = ind_5m[-1]
                 adr_val = last_ind.get("adr")
                 adr_abs_val = last_ind.get("adr_abs")
+                today_high = last_ind.get("today_high")
+                today_low = last_ind.get("today_low")
+        
+        # Real-time local adjustment to high/low based on live LTP
+        if last_price > 0:
+            if today_high is None or last_price > today_high:
+                today_high = last_price
+            if today_low is None or last_price < today_low:
+                today_low = last_price
+
+        # Calculate ADR exhaustion
+        adr_exhaustion_pct = 0.0
+        today_range = 0.0
+        if today_high is not None and today_low is not None and adr_abs_val and adr_abs_val > 0:
+            today_range = today_high - today_low
+            adr_exhaustion_pct = (today_range / adr_abs_val) * 100.0
         
         # 3. Calculate Risk Allocated & Risk %
         allocated_risk = 0.0
@@ -736,6 +806,47 @@ async def api_kite_positions():
                 # Base on maximum ₹2,500 absolute risk limit
                 risk_pct = min(100.0, (allocated_risk / 2500.0) * 100.0)
         
+        # 4. Calculate Risk-Reward Ratio (R:R) & Distances
+        rr_ratio = 0.0
+        is_estimated_rr = True
+        
+        eff_target = target_price
+        if not eff_target and adr_abs_val:
+            eff_target = avg_price + (adr_abs_val * 1.5) if qty > 0 else avg_price - (adr_abs_val * 1.5)
+            
+        eff_sl = sl_price
+        if not eff_sl and adr_abs_val:
+            eff_sl = avg_price - adr_abs_val if qty > 0 else avg_price + adr_abs_val
+            
+        if target_price and sl_price:
+            is_estimated_rr = False
+            
+        reward_dist = abs(eff_target - avg_price) if eff_target else 0.0
+        risk_dist = abs(avg_price - eff_sl) if eff_sl else 0.0
+        
+        if risk_dist > 0:
+            rr_ratio = reward_dist / risk_dist
+        dist_to_target_pct = None
+        dist_to_sl_pct = None
+        target_dist_rs = None
+        sl_dist_rs = None
+        
+        if qty != 0 and last_price > 0:
+            if qty > 0: # Long
+                if target_price:
+                    dist_to_target_pct = ((target_price - last_price) / last_price) * 100.0
+                    target_dist_rs = target_price - last_price
+                if sl_price:
+                    dist_to_sl_pct = ((last_price - sl_price) / last_price) * 100.0
+                    sl_dist_rs = last_price - sl_price
+            else: # Short
+                if target_price:
+                    dist_to_target_pct = ((last_price - target_price) / last_price) * 100.0
+                    target_dist_rs = last_price - target_price
+                if sl_price:
+                    dist_to_sl_pct = ((sl_price - last_price) / last_price) * 100.0
+                    sl_dist_rs = sl_price - last_price
+        
         ghost_oco_active = (target_order_id is not None) and (sl_order_id is not None)
         
         enriched_positions.append({
@@ -743,21 +854,39 @@ async def api_kite_positions():
             "quantity": qty,
             "average_price": avg_price,
             "last_price": last_price,
-            "pnl": p.get("pnl", 0.0),
+            "pnl": pnl_val,
             "product": p.get("product"),
             "target_price": target_price,
             "target_order_id": target_order_id,
+            "target_status": target_status,
+            "target_order_type": target_order_type,
             "sl_price": sl_price,
             "sl_order_id": sl_order_id,
+            "sl_status": sl_status,
+            "sl_order_type": sl_order_type,
             "ghost_oco_active": ghost_oco_active,
             "adr": adr_val,
             "adr_abs": adr_abs_val,
+            "today_high": today_high,
+            "today_low": today_low,
+            "today_range": today_range,
+            "adr_exhaustion_pct": round(adr_exhaustion_pct, 2),
             "allocated_risk": round(allocated_risk, 2),
-            "risk_pct": round(risk_pct, 1)
+            "risk_pct": round(risk_pct, 1),
+            "rr_ratio": round(rr_ratio, 2),
+            "is_estimated_rr": is_estimated_rr,
+            "dist_to_target_pct": round(dist_to_target_pct, 2) if dist_to_target_pct is not None else None,
+            "dist_to_sl_pct": round(dist_to_sl_pct, 2) if dist_to_sl_pct is not None else None,
+            "target_dist_rs": round(target_dist_rs, 2) if target_dist_rs is not None else None,
+            "sl_dist_rs": round(sl_dist_rs, 2) if sl_dist_rs is not None else None,
+            "buy_quantity": p.get("buy_quantity", 0),
+            "sell_quantity": p.get("sell_quantity", 0),
+            "buy_price": p.get("buy_price", 0.0),
+            "sell_price": p.get("sell_price", 0.0)
         })
         
     return JSONResponse({"positions": enriched_positions})
-
+ 
 @app.post("/api/kite/panic")
 async def api_kite_panic():
     res = kite_auth_manager.panic_square_off()
@@ -766,7 +895,7 @@ async def api_kite_panic():
     elif res.get("status") == "partial":
         return JSONResponse(res, status_code=207)
     return JSONResponse(res)
-
+ 
 @app.post("/api/kite/exit_position")
 async def api_kite_exit_position(payload: dict):
     symbol = payload.get("symbol")
@@ -777,6 +906,39 @@ async def api_kite_exit_position(payload: dict):
         return JSONResponse(res, status_code=500)
     return JSONResponse(res)
 
+@app.post("/api/kite/scale_out")
+async def api_kite_scale_out(payload: dict):
+    symbol = payload.get("symbol")
+    if not symbol:
+        return JSONResponse({"status": "error", "message": "Symbol is required"}, status_code=400)
+    res = kite_auth_manager.book_half_position(symbol)
+    if res.get("status") == "error":
+        return JSONResponse(res, status_code=500)
+    return JSONResponse(res)
+
+@app.post("/api/kite/modify_sl")
+async def api_kite_modify_sl(payload: dict):
+    symbol = payload.get("symbol")
+    new_sl = payload.get("new_sl_price")
+    sl_order_id = payload.get("sl_order_id")
+    quantity = payload.get("quantity")
+    transaction_type = payload.get("transaction_type")
+    product = payload.get("product")
+    
+    if not symbol or new_sl is None:
+        return JSONResponse({"status": "error", "message": "symbol and new_sl_price are required"}, status_code=400)
+    
+    res = kite_auth_manager.modify_or_place_sl(
+        symbol=symbol,
+        new_trigger_price=float(new_sl),
+        sl_order_id=sl_order_id,
+        quantity=quantity,
+        transaction_type=transaction_type,
+        product=product
+    )
+    if res.get("status") == "error":
+        return JSONResponse(res, status_code=500)
+    return JSONResponse(res)
 
 
 @app.get("/api/logs")
@@ -797,7 +959,11 @@ async def api_logs():
 
 @app.get("/api/data")
 async def api_data():
-    active_symbols = load_watchlist()
+    watchlist = load_watchlist()
+    buy_symbols = watchlist.get("buy", [])
+    sell_symbols = watchlist.get("sell", [])
+    active_symbols = buy_symbols + sell_symbols
+    
     active_names = [s.split(":")[1].split("-")[0] if ":" in s else s for s in active_symbols]
     data_map = {}
 
@@ -807,6 +973,7 @@ async def api_data():
         data_map[name] = {
             'symbol': name,
             'full_symbol': sym,
+            'direction': 'BUY' if sym in buy_symbols else 'SELL',
             'lp': '...',
             '5_close': '...',
             '5_vwap': '...',
@@ -825,10 +992,13 @@ async def api_data():
     # 1. Parse official logs (LTP)
     if os.path.exists(config.FYERS_LOG):
         try:
+            from collections import deque
             with open(config.FYERS_LOG, "r") as f:
-                lines = f.readlines()
-                if len(lines) > 1:
-                    reader = csv.DictReader(lines)
+                header_line = f.readline().strip()
+                if header_line:
+                    header = header_line.split(',')
+                    last_lines = deque(f, maxlen=300)
+                    reader = csv.DictReader(last_lines, fieldnames=header)
                     for row in reader:
                         sym = row.get('symbol', '')
                         name = sym.split(":")[1].split("-")[0] if ":" in sym else sym
@@ -938,6 +1108,7 @@ async def api_data():
     for name in active_names:
         d = data_map.get(name, {})
         lp = d.get('lp', '...')
+        direction = d.get('direction', 'BUY')
         p5 = lp if lp != '...' else d.get('5_close', '...')
         p15 = lp if lp != '...' else d.get('15_close', '...')
         
@@ -971,9 +1142,14 @@ async def api_data():
             conf = "🔴 BEARISH"
             badge_class = "trend-bear"
             
+        if direction == 'BUY':
+            dir_badge = '<span style="background: rgba(63, 185, 80, 0.12); color: #3fb950; font-size: 0.72em; padding: 2px 6px; border-radius: 4px; font-weight: bold; margin-left: 8px; border: 1px solid rgba(63, 185, 80, 0.25);">BUY</span>'
+        else:
+            dir_badge = '<span style="background: rgba(248, 81, 73, 0.12); color: #f85149; font-size: 0.72em; padding: 2px 6px; border-radius: 4px; font-weight: bold; margin-left: 8px; border: 1px solid rgba(248, 81, 73, 0.25);">SELL</span>'
+
         html += f"""
         <tr>
-            <td class="sym-name">{name}</td>
+            <td class="sym-name">{name}{dir_badge}</td>
             <td class="price-val" style="font-family: 'JetBrains Mono', monospace;">₹{lp}</td>
             <td class="price-val">
                 <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;">

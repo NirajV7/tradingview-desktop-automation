@@ -27,8 +27,15 @@ store_lock = threading.Lock()
 
 def get_symbols():
     if os.path.exists(WATCHLIST_FILE):
-        with open(WATCHLIST_FILE, "r") as f:
-            return json.load(f)
+        try:
+            with open(WATCHLIST_FILE, "r") as f:
+                loaded = json.load(f)
+                if isinstance(loaded, list):
+                    return loaded
+                elif isinstance(loaded, dict):
+                    return loaded.get("buy", []) + loaded.get("sell", [])
+        except Exception as e:
+            print(f"Error loading watchlist in fyers logger: {e}")
     return []
 
 def get_access_token():

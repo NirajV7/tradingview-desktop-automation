@@ -1,8 +1,57 @@
 import os
 import json
 import csv
-from datetime import datetime
+from datetime import datetime, timedelta
 import config
+from fyers_apiv3 import fyersModel
+from indicator_engine import compute_indicators, calculate_adr_percentage, calculate_adr_absolute
+from dashboard_app import get_last_closed_candle
+
+def get_fyers_client():
+    if os.path.exists(config.TOKEN_FILE):
+        try:
+            with open(config.TOKEN_FILE, "r") as f:
+                token_data = json.load(f)
+                access_token = token_data.get("access_token")
+                if access_token:
+                    return fyersModel.FyersModel(
+                        client_id=config.CLIENT_ID,
+                        is_async=False,
+                        token=access_token,
+                        log_path=os.getcwd()
+                    )
+        except Exception as e:
+            print(f"Error loading Fyers client: {e}")
+    return None
+
+def fetch_fyers_indicators(symbol, resolution, days_back):
+    fyers = get_fyers_client()
+    if not fyers:
+        return []
+    
+    # Calculate dates
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    from_date_str = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+    
+    data = {
+        "symbol": symbol,
+        "resolution": resolution,
+        "date_format": "1",
+        "range_from": from_date_str,
+        "range_to": today_str,
+        "cont_flag": "1"
+    }
+    
+    try:
+        response = fyers.history(data=data)
+        if response.get("s") == "ok":
+            candles = response.get("candles", [])
+            if candles:
+                return compute_indicators(candles)
+    except Exception as e:
+        print(f"Error fetching Fyers history for {symbol} ({resolution}): {e}")
+    return []
+
 
 def normalize_symbol(sym):
     """Universal symbol normalizer.
@@ -111,13 +160,13 @@ def generate_telemetry():
     
     # 2. Parse all high-frequency and multi-timeframe closed logs
     fyers_micro = parse_fyers_log(config.FYERS_LOG, active_bases, num_lines=150)
-    tv_micro = parse_tv_log(config.TRADING_LOG, active_bases, num_lines=150)
+    tv_micro = {}  # Archived
     
     fyers_5m = parse_fyers_log(config.FYERS_LOG_5M, active_bases, num_lines=100)
-    tv_5m = parse_tv_log(config.TRADING_LOG_5M, active_bases, num_lines=100)
+    tv_5m = {}  # Archived
     
     fyers_15m = parse_fyers_log(config.FYERS_LOG_15M, active_bases, num_lines=100)
-    tv_15m = parse_tv_log(config.TRADING_LOG_15M, active_bases, num_lines=100)
+    tv_15m = {}  # Archived
 
     # 3. Output Beautiful Quantitative Markdown Payload
     print(f"============================================================")
@@ -224,25 +273,13 @@ def generate_telemetry():
     print("| :--- | :--- | :--- | :--- | :--- | :--- |")
     for base in sorted(active_bases):
         print_fyers_table(fyers_micro, base, limit=8)
-        
-    print("\n#### [1B. TradingView Micro Indicator Logs (15s Frequency)]")
-    print("| Ticker | TF | Price | VWAP | Trend State | EMA(20) | EMA(50) | EMA(200) | RSI | Time |")
-    print("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
-    for base in sorted(active_bases):
-        print_tv_table(tv_micro, base, limit=8, include_tf=True)
     print("")
 
     # ==========================================
     # SECTION 2: 5-MINUTE WAVE PROGRESSION (Closed Candles)
     # ==========================================
     print("### 2. 5-MINUTE WAVE PROGRESSION (Last 10 Closed 5M Candles)")
-    print("\n#### [2A. TradingView 5-Minute Technical Candles]")
-    print("| Ticker | Price | VWAP | Trend State | EMA(20) | EMA(50) | EMA(200) | RSI | Time |")
-    print("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
-    for base in sorted(active_bases):
-        print_tv_table(tv_5m, base, limit=10, include_tf=False)
-        
-    print("\n#### [2B. Fyers 5-Minute Volume & Spread Progression]")
+    print("\n#### [2A. Fyers 5-Minute Volume & Spread Progression]")
     print("| Ticker | LTP | Spread Buy Qty | Spread Sell Qty | Cumulative Vol | Time |")
     print("| :--- | :--- | :--- | :--- | :--- | :--- |")
     for base in sorted(active_bases):
@@ -253,17 +290,161 @@ def generate_telemetry():
     # SECTION 3: 15-MINUTE MACRO TIDE PROGRESSION (Closed Candles)
     # ==========================================
     print("### 3. 15-MINUTE MACRO TIDE PROGRESSION (Last 10 Closed 15M Candles)")
-    print("\n#### [3A. TradingView 15-Minute Technical Candles]")
-    print("| Ticker | Price | VWAP | Trend State | EMA(20) | EMA(50) | EMA(200) | RSI | Time |")
-    print("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
-    for base in sorted(active_bases):
-        print_tv_table(tv_15m, base, limit=10, include_tf=False)
-        
-    print("\n#### [3B. Fyers 15-Minute Volume & Spread Progression]")
+    print("\n#### [3A. Fyers 15-Minute Volume & Spread Progression]")
     print("| Ticker | LTP | Spread Buy Qty | Spread Sell Qty | Cumulative Vol | Time |")
     print("| :--- | :--- | :--- | :--- | :--- | :--- |")
     for base in sorted(active_bases):
         print_fyers_table(fyers_15m, base, limit=10)
+
+    # ==========================================
+    # SECTION 4: FYERS-BACKED SERVER-SIDE INDICATOR ENGINE
+    # ==========================================
+    print("### 4. FYERS-BACKED TECHNICAL INDICATOR ENGINE (Real-Time Server Calculations)")
+    print("\n#### [4A. Fyers 5-Minute Technical Candles (Calculated from Fyers API)]")
+    print("| Ticker | Price | VWAP | Trend State | EMA(20) | EMA(50) | EMA(200) | RSI | ADR (%) | ADR (Abs) | Time |")
+    print("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+    
+    def evaluate_fyers_trend(p, v, e20, e50, e200, r):
+        try:
+            # Bullish
+            is_bull_baseline = p > v
+            is_bull_structure = e20 > e50
+            is_bull_anchor = p > e200
+            is_bull_momentum = r > 50
+            
+            # Bearish
+            is_bear_baseline = p < v
+            is_bear_structure = e20 < e50
+            is_bear_anchor = p < e200
+            is_bear_momentum = r < 50
+            
+            if is_bull_baseline and is_bull_structure and is_bull_anchor and is_bull_momentum:
+                if r > 70: return "⚠️ OVERBOUGHT"
+                return "🟢 BULLISH"
+            if is_bear_baseline and is_bear_structure and is_bear_anchor and is_bear_momentum:
+                if r < 30: return "⚠️ OVERSOLD"
+                return "🔴 BEARISH"
+            return "🟡 CONGESTION"
+        except:
+            return "🟡 CONGESTION"
+
+    for base in sorted(active_bases):
+        # Find full symbol from watchlist
+        full_symbol = next((s for s in watchlist if normalize_symbol(s) == base), f"NSE:{base}-EQ")
+        
+        # 1. Fetch Daily History and compute ADR % and ADR Abs
+        adr_val = None
+        adr_abs_val = None
+        try:
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            from_30d_str = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+            fyers = get_fyers_client()
+            if fyers:
+                res_d = fyers.history({
+                    "symbol": full_symbol,
+                    "resolution": "D",
+                    "date_format": "1",
+                    "range_from": from_30d_str,
+                    "range_to": today_str,
+                    "cont_flag": "1"
+                })
+                if res_d.get("s") == "ok":
+                    d_candles = res_d.get("candles", [])
+                    if d_candles:
+                        adr_val = calculate_adr_percentage(d_candles, 14)
+                        adr_abs_val = calculate_adr_absolute(d_candles, 14)
+        except Exception as e:
+            pass
+            
+        adr_str = f"{adr_val:.2f}%" if adr_val is not None else "..."
+        adr_abs_str = f"₹{adr_abs_val:.2f}" if adr_abs_val is not None else "..."
+
+        # Fetch 5m history from Fyers (5 days back is extremely safe for 200 EMA)
+        results5m = fetch_fyers_indicators(full_symbol, "5", 5)
+        if results5m:
+            last_r = get_last_closed_candle(results5m, 5)
+            if last_r:
+                p = last_r["close"]
+                v = last_r["vwap"]
+                e20 = last_r["ema20"]
+                e50 = last_r["ema50"]
+                e200 = last_r["ema200"]
+                r = last_r["rsi"]
+                ts = last_r["timestamp"].split(" ")[-1]
+                
+                trend = evaluate_fyers_trend(p, v, e20, e50, e200, r)
+                
+                v_str = f"{v:.2f}" if v else "..."
+                e20_str = f"{e20:.2f}" if e20 else "..."
+                e50_str = f"{e50:.2f}" if e50 else "..."
+                e200_str = f"{e200:.2f}" if e200 else "..."
+                r_str = f"{r:.2f}" if r else "..."
+                
+                print(f"| **{base}** | {p:.2f} | {v_str} | {trend} | {e20_str} | {e50_str} | {e200_str} | {r_str} | {adr_str} | {adr_abs_str} | {ts} |")
+            else:
+                print(f"| **{base}** | [ No Fyers 5M History ] | - | - | - | - | - | - | - | - | - |")
+        else:
+            print(f"| **{base}** | [ No Fyers 5M History ] | - | - | - | - | - | - | - | - | - |")
+            
+    print("\n#### [4B. Fyers 15-Minute Technical Candles (Calculated from Fyers API)]")
+    print("| Ticker | Price | VWAP | Trend State | EMA(20) | EMA(50) | EMA(200) | RSI | ADR (%) | ADR (Abs) | Time |")
+    print("| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |")
+    for base in sorted(active_bases):
+        full_symbol = next((s for s in watchlist if normalize_symbol(s) == base), f"NSE:{base}-EQ")
+        
+        # 1. Fetch Daily History and compute ADR % and ADR Abs
+        adr_val = None
+        adr_abs_val = None
+        try:
+            today_str = datetime.now().strftime("%Y-%m-%d")
+            from_30d_str = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
+            fyers = get_fyers_client()
+            if fyers:
+                res_d = fyers.history({
+                    "symbol": full_symbol,
+                    "resolution": "D",
+                    "date_format": "1",
+                    "range_from": from_30d_str,
+                    "range_to": today_str,
+                    "cont_flag": "1"
+                })
+                if res_d.get("s") == "ok":
+                    d_candles = res_d.get("candles", [])
+                    if d_candles:
+                        adr_val = calculate_adr_percentage(d_candles, 14)
+                        adr_abs_val = calculate_adr_absolute(d_candles, 14)
+        except Exception as e:
+            pass
+            
+        adr_str = f"{adr_val:.2f}%" if adr_val is not None else "..."
+        adr_abs_str = f"₹{adr_abs_val:.2f}" if adr_abs_val is not None else "..."
+
+        # Fetch 15m history from Fyers (15 days back for 200 EMA)
+        results15m = fetch_fyers_indicators(full_symbol, "15", 15)
+        if results15m:
+            last_r = get_last_closed_candle(results15m, 15)
+            if last_r:
+                p = last_r["close"]
+                v = last_r["vwap"]
+                e20 = last_r["ema20"]
+                e50 = last_r["ema50"]
+                e200 = last_r["ema200"]
+                r = last_r["rsi"]
+                ts = last_r["timestamp"].split(" ")[-1]
+                
+                trend = evaluate_fyers_trend(p, v, e20, e50, e200, r)
+                
+                v_str = f"{v:.2f}" if v else "..."
+                e20_str = f"{e20:.2f}" if e20 else "..."
+                e50_str = f"{e50:.2f}" if e50 else "..."
+                e200_str = f"{e200:.2f}" if e200 else "..."
+                r_str = f"{r:.2f}" if r else "..."
+                
+                print(f"| **{base}** | {p:.2f} | {v_str} | {trend} | {e20_str} | {e50_str} | {e200_str} | {r_str} | {adr_str} | {adr_abs_str} | {ts} |")
+            else:
+                print(f"| **{base}** | [ No Fyers 15M History ] | - | - | - | - | - | - | - | - | - |")
+        else:
+            print(f"| **{base}** | [ No Fyers 15M History ] | - | - | - | - | - | - | - | - | - |")
 
     print("\n============================================================")
     print("👉 INSTRUCTIONS FOR CLAUDE:")
