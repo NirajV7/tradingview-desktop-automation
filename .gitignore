@@ -9,9 +9,11 @@ data/fyers_token.json
 data/kite_token.json
 data/watchlist.json
 data/fyers_nse_cm.csv
+data/selected_stocks/
 
 # All log outputs and telemetry database inside logs/
 logs/
 
-# Private Trading Rules, Configurations & Journals
-trade_setup/
+# Sensitive trade data, journals, and analysis reports
+trade_journal.md
+analysis/
