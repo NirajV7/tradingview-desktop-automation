@@ -17,3 +17,5 @@ logs/
 # Sensitive trade data, journals, and analysis reports
 trade_journal.md
 analysis/
+chat_summary/
+
