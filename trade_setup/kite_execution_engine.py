@@ -44,9 +44,16 @@ from trade_setup.engine.costs import fetch_transaction_costs
 from trade_setup.engine.journal import log_trade_to_journal
 from trade_setup.engine.rules import evaluate_live_rules
 from trade_setup.engine.rules_sell import evaluate_live_sell_rules
-from trade_setup.engine.risk import execute_order_disciplines, execute_sell_order_disciplines
+from trade_setup.engine.risk import (
+    execute_order_disciplines,
+    execute_sell_order_disciplines,
+    check_radar_daily_loss_limit,
+    execute_radar_buy_disciplines,
+    execute_radar_sell_disciplines
+)
 from trade_setup.engine.orders import place_kite_bracket_defense, place_kite_sell_bracket_defense
-from trade_setup.engine.auditor import audit_active_trades
+from trade_setup.engine.auditor import audit_active_trades, square_off_radar_position
+from trade_setup.engine.rules_pullback import evaluate_pullback_rules
 
 class KiteExecutionEngine:
     # Class-level delegate method bindings
@@ -65,13 +72,18 @@ class KiteExecutionEngine:
     place_kite_bracket_defense = place_kite_bracket_defense
     place_kite_sell_bracket_defense = place_kite_sell_bracket_defense
     audit_active_trades = audit_active_trades
+    square_off_radar_position = square_off_radar_position
+    evaluate_pullback_rules = evaluate_pullback_rules
+    check_radar_daily_loss_limit = check_radar_daily_loss_limit
+    execute_radar_buy_disciplines = execute_radar_buy_disciplines
+    execute_radar_sell_disciplines = execute_radar_sell_disciplines
 
     def __init__(self, dry_run=True):
         self.dry_run = dry_run
         self.kite = None
         self.active_trades = {}
         self.orb_ranges = {}  # {symbol: {"high": float, "low": float}}
-        self.risk_per_trade = 2500.0  # Conservative risk limit per trade (₹)
+        self.risk_per_trade = 100.0  # Scaled down for live safety testing (₹)
         self.max_active_trades = 3    # Limit correlation risk
         
         # Stateful File Pointers for ultra-fast incremental reading
@@ -279,6 +291,30 @@ class KiteExecutionEngine:
                 print(f"⚠️ Error checking symbol direction: {e}")
         return "BUY"
 
+    def load_radar_watchlist(self):
+        import json
+        import os
+        path = "data/radar_watchlist.json"
+        if not os.path.exists(path):
+            return []
+        try:
+            with open(path, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"⚠️ Error loading radar watchlist: {e}")
+            return []
+
+    def save_radar_watchlist(self, data):
+        import json
+        import os
+        path = "data/radar_watchlist.json"
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        try:
+            with open(path, "w") as f:
+                json.dump(data, f, indent=4)
+        except Exception as e:
+            print(f"⚠️ Error saving radar watchlist: {e}")
+
     def run_polling_loop(self):
         """Active scanner that continuously audits watchlist symbols against filters."""
         print("\n📡 Start active scanning. Press Ctrl+C to terminate.")
@@ -293,30 +329,65 @@ class KiteExecutionEngine:
 
                     # 2. Scan watchlist for new entry triggers
                     watchlist = self.load_watchlist()
-                    if not watchlist:
-                        print("⚠️ Watchlist is empty. Pre-load your stocks into watchlist.json.")
-                        time.sleep(10)
-                        continue
-
-                    for symbol in watchlist:
-                        if symbol in self.active_trades:
-                            continue
+                    if watchlist:
+                        for symbol in watchlist:
+                            if symbol in self.active_trades:
+                                continue
+                                
+                            # COOLDOWN GUARD: Prevent re-entering a stock that was already traded today
+                            if hasattr(self, 'completed_trades_today') and symbol in self.completed_trades_today:
+                                continue
                             
-                        # COOLDOWN GUARD: Prevent re-entering a stock that was already traded today
-                        if hasattr(self, 'completed_trades_today') and symbol in self.completed_trades_today:
-                            continue
-                        
-                        direction = self.get_symbol_direction(symbol)
-                        if direction == "SELL":
-                            status = self.evaluate_live_sell_rules(symbol)
-                            prefix = "[SELL-SCAN]"
-                        else:
-                            status = self.evaluate_live_rules(symbol)
-                            prefix = "[BUY-SCAN]"
+                            direction = self.get_symbol_direction(symbol)
+                            if direction == "SELL":
+                                status = self.evaluate_live_sell_rules(symbol)
+                                prefix = "[SELL-SCAN]"
+                            else:
+                                status = self.evaluate_live_rules(symbol)
+                                prefix = "[BUY-SCAN]"
 
-                        # Suppress repeating logs to keep execution clear
-                        if status and "FAILED" not in str(status):
-                            print(f"🔎 {prefix} {symbol}: {status}")
+                            # Suppress repeating logs to keep execution clear
+                            if status and "FAILED" not in str(status):
+                                print(f"🔎 {prefix} {symbol}: {status}")
+
+                    # 3. Scan Radar Watchlist
+                    radar_wl = self.load_radar_watchlist()
+                    if radar_wl:
+                        is_radar_disabled = self.check_radar_daily_loss_limit()
+                        radar_active_count = len([s for s, t in self.active_trades.items() if t.get("strategy") == "RADAR"])
+                        
+                        radar_updated = False
+                        radar_to_remove = []
+                        
+                        for item in radar_wl:
+                            symbol = item["symbol"]
+                            
+                            # If already active, remove from watchlist
+                            if symbol in self.active_trades:
+                                radar_to_remove.append(item)
+                                continue
+                                
+                            # If daily loss limit hit or max radar trades hit, do not evaluate trigger
+                            if is_radar_disabled or radar_active_count >= 2:
+                                continue
+                                
+                            status = self.evaluate_pullback_rules(item)
+                            
+                            if status and "WAITING" not in str(status):
+                                print(f"🔎 [RADAR-SCAN] {symbol}: {status}")
+                                
+                            if status == "INVALIDATED" or "FAILED" in str(status):
+                                radar_to_remove.append(item)
+                            elif "TRIGGERED" in str(status) or symbol in self.active_trades:
+                                radar_to_remove.append(item)
+                            else:
+                                # Mark as updated to save any progress state (pullback low/high/state)
+                                radar_updated = True
+                                
+                        if radar_to_remove or radar_updated:
+                            new_radar_wl = [x for x in radar_wl if x not in radar_to_remove]
+                            self.save_radar_watchlist(new_radar_wl)
+                            
                 except Exception as e:
                     print(f"⚠️ Error inside polling loop iteration: {e}")
                 

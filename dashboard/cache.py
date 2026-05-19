@@ -48,7 +48,7 @@ def log_fyers_indicators_to_csv(file_path, symbol, candle):
         with open(file_path, "a", newline="") as f:
             writer = csv.writer(f)
             if not file_exists:
-                writer.writerow(["timestamp", "symbol", "price", "ema20", "ema50", "ema200", "rsi", "vwap", "volume", "adr", "adr_abs"])
+                writer.writerow(["timestamp", "symbol", "price", "ema20", "ema50", "ema200", "rsi", "vwap", "volume", "adr", "adr_abs", "high", "low"])
             
             p = candle.get("close", 0.0)
             e20 = candle.get("ema20")
@@ -59,6 +59,8 @@ def log_fyers_indicators_to_csv(file_path, symbol, candle):
             vol = candle.get("volume", 0)
             adr = candle.get("adr")
             adr_abs = candle.get("adr_abs")
+            high_price = candle.get("high", p)
+            low_price = candle.get("low", p)
             
             e20_val = f"{e20:.2f}" if e20 is not None else ""
             e50_val = f"{e50:.2f}" if e50 is not None else ""
@@ -67,6 +69,8 @@ def log_fyers_indicators_to_csv(file_path, symbol, candle):
             v_val = f"{v:.2f}" if v is not None else ""
             adr_val = f"{adr:.2f}" if adr is not None else ""
             adr_abs_val = f"{adr_abs:.2f}" if adr_abs is not None else ""
+            high_val = f"{high_price:.2f}"
+            low_val = f"{low_price:.2f}"
             
             writer.writerow([
                 candle["timestamp"],
@@ -79,7 +83,9 @@ def log_fyers_indicators_to_csv(file_path, symbol, candle):
                 v_val,
                 vol,
                 adr_val,
-                adr_abs_val
+                adr_abs_val,
+                high_val,
+                low_val
             ])
         return True
     except Exception as e:
@@ -108,10 +114,20 @@ async def fyers_cache_updater():
     while True:
         try:
             watchlist = load_watchlist()
-            active_symbols = watchlist.get("buy", []) + watchlist.get("sell", [])
+            radar_watchlist = []
+            if os.path.exists(config.RADAR_WATCHLIST_FILE):
+                try:
+                    with open(config.RADAR_WATCHLIST_FILE, "r") as f:
+                        radar_watchlist = json.load(f)
+                except Exception:
+                    pass
+            radar_symbols = [item.get("symbol") for item in radar_watchlist if item.get("symbol")]
+            
+            active_symbols = list(set(watchlist.get("buy", []) + watchlist.get("sell", []) + radar_symbols))
             if not active_symbols:
                 await asyncio.sleep(5)
                 continue
+
 
             # Load Fyers model
             token_file = config.TOKEN_FILE

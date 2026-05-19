@@ -85,6 +85,53 @@ def audit_active_trades(self):
                     print(f"❌ Failed to square off trade on Zerodha: {e}")
             continue
 
+        is_radar = (trade.get("strategy") == "RADAR")
+        if is_radar:
+            target = float(trade.get("target", 0.0))
+            if direction == "SELL":
+                # Stop Loss Hit (Short SL is above entry)
+                if current_price >= sl:
+                    print(f"\n💥 >>> RADAR SHORT STOP LOSS HIT FOR {symbol} <<< 💥")
+                    print(f"📈 Price: ₹{current_price:.2f} >= Stop Loss: ₹{sl:.2f}")
+                    if self.dry_run:
+                        self.log_trade_to_journal(symbol, entry, sl, qty, direction="SELL", exit_reason="STOP LOSS HIT (RADAR)")
+                        del self.active_trades[symbol]
+                    else:
+                        self.square_off_radar_position(symbol, qty, "BUY", sl, "STOP LOSS HIT (RADAR)")
+                    continue
+                # Target Hit (Short Target is below entry)
+                if current_price <= target:
+                    print(f"\n🎉 >>> RADAR SHORT TARGET ACHIEVED FOR {symbol} <<< 🎉")
+                    print(f"💰 Price: ₹{current_price:.2f} <= Target: ₹{target:.2f}")
+                    if self.dry_run:
+                        self.log_trade_to_journal(symbol, entry, current_price, qty, direction="SELL", exit_reason="TARGET ACHIEVED (RADAR)")
+                        del self.active_trades[symbol]
+                    else:
+                        self.square_off_radar_position(symbol, qty, "BUY", current_price, "TARGET ACHIEVED (RADAR)")
+                    continue
+            else: # direction == "BUY"
+                # Stop Loss Hit (Long SL is below entry)
+                if current_price <= sl:
+                    print(f"\n💥 >>> RADAR LONG STOP LOSS HIT FOR {symbol} <<< 💥")
+                    print(f"📉 Price: ₹{current_price:.2f} <= Stop Loss: ₹{sl:.2f}")
+                    if self.dry_run:
+                        self.log_trade_to_journal(symbol, entry, sl, qty, direction="BUY", exit_reason="STOP LOSS HIT (RADAR)")
+                        del self.active_trades[symbol]
+                    else:
+                        self.square_off_radar_position(symbol, qty, "SELL", sl, "STOP LOSS HIT (RADAR)")
+                    continue
+                # Target Hit (Long Target is above entry)
+                if current_price >= target:
+                    print(f"\n🎉 >>> RADAR LONG TARGET ACHIEVED FOR {symbol} <<< 🎉")
+                    print(f"💰 Price: ₹{current_price:.2f} >= Target: ₹{target:.2f}")
+                    if self.dry_run:
+                        self.log_trade_to_journal(symbol, entry, current_price, qty, direction="BUY", exit_reason="TARGET ACHIEVED (RADAR)")
+                        del self.active_trades[symbol]
+                    else:
+                        self.square_off_radar_position(symbol, qty, "SELL", current_price, "TARGET ACHIEVED (RADAR)")
+                    continue
+            continue
+
         if direction == "SELL":
             trigger_70_adr = daily_open - (adr_abs * 0.70)
             trigger_75_adr = daily_open - (adr_abs * 0.75)
@@ -243,3 +290,48 @@ def audit_active_trades(self):
                         del self.active_trades[symbol]
                     except Exception as e:
                         print(f"❌ Failed to square off trade on Zerodha: {e}")
+
+def square_off_radar_position(self, symbol, qty, exit_direction, exit_price, reason):
+    try:
+        trade = self.active_trades.get(symbol)
+        if not trade:
+            return
+        sl_order_id = trade.get("sl_id")
+        if sl_order_id:
+            print(f"🧹 Canceling pending SL order {sl_order_id}...")
+            try:
+                self.kite.cancel_order(
+                    variety=self.kite.VARIETY_REGULAR,
+                    order_id=sl_order_id
+                )
+            except Exception as ex:
+                print(f"⚠️ Failed to cancel pending SL: {ex}")
+        
+        target_order_id = trade.get("target_id")
+        if target_order_id:
+            print(f"🧹 Canceling pending target order {target_order_id}...")
+            try:
+                self.kite.cancel_order(
+                    variety=self.kite.VARIETY_REGULAR,
+                    order_id=target_order_id
+                )
+            except Exception as ex:
+                print(f"⚠️ Failed to cancel target: {ex}")
+
+        print(f"🛒 Placing Market Exit Order ({exit_direction}) to Square off Radar trade...")
+        exit_order_id = self.kite.place_order(
+            variety=self.kite.VARIETY_REGULAR,
+            exchange=self.kite.EXCHANGE_NSE,
+            tradingsymbol=symbol,
+            transaction_type=exit_direction,
+            quantity=qty,
+            product=self.kite.PRODUCT_MIS,
+            order_type=self.kite.ORDER_TYPE_MARKET
+        )
+        print(f"✅ Squared Off successfully! Order ID: {exit_order_id}")
+        self.log_trade_to_journal(symbol, trade["entry"], exit_price, qty, direction=trade["direction"], exit_reason=reason, exit_order_id=exit_order_id)
+        self.completed_trades_today.add(symbol)
+        del self.active_trades[symbol]
+    except Exception as e:
+        print(f"❌ Failed to square off Radar trade: {e}")
+

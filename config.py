@@ -23,6 +23,8 @@ ENGINE_LOG = os.path.join(CWD, "logs", "engine.log")
 NIFTY_FEED_CSV = os.path.join(CWD, "logs", "nifty_50_feed.csv")
 NIFTY_SPIKES_LOG = os.path.join(CWD, "logs", "nifty_spikes.log")
 TRADE_JOURNAL_CSV = os.path.join(CWD, "data", "trade_journal.csv")
+RADAR_WATCHLIST_FILE = os.path.join(CWD, "data", "radar_watchlist.json")
+
 
 # Nifty 50 Stock Universe Tickers for Volumetric Radar
 NIFTY_50_TICKERS = [
