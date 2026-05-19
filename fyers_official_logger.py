@@ -198,7 +198,7 @@ if __name__ == "__main__":
     
     fyers_ws = data_ws.FyersDataSocket(
         access_token=full_token,
-        log_path=os.getcwd(),
+        log_path=os.path.join(config.CWD, "logs"),
         litemode=False,
         reconnect=True,
         on_connect=onopen,

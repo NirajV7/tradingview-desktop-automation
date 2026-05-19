@@ -1,16 +1,17 @@
 venv/
 __pycache__/
-*.csv
 .DS_Store
 *.pyc
 .env
-fyers_token.json
-fyersApi.log
-fyersRequests.log
-engine.log
-watchlist.json
-*.log
+
+# Private configurations, tokens, and datasets inside data/
+data/fyers_token.json
+data/kite_token.json
+data/watchlist.json
+data/fyers_nse_cm.csv
+
+# All log outputs and telemetry database inside logs/
+logs/
 
 # Private Trading Rules, Configurations & Journals
 trade_setup/
-

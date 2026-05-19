@@ -18,7 +18,7 @@ def get_fyers_client():
                         client_id=config.CLIENT_ID,
                         is_async=False,
                         token=access_token,
-                        log_path=os.getcwd()
+                        log_path=os.path.join(config.CWD, "logs")
                     )
         except Exception as e:
             print(f"Error loading Fyers client: {e}")
