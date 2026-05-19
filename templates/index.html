@@ -336,6 +336,39 @@
             });
         }
 
+        function triggerSingleExit(symbol) {
+            if (!confirm(`⚠️ Are you sure you want to market-exit all positions and cancel pending orders for ${symbol}?`)) {
+                return;
+            }
+            
+            const btn = event.currentTarget;
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '⏳ EXITING...';
+            
+            fetch('/api/kite/exit_position', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ symbol: symbol })
+            })
+            .then(r => r.json())
+            .then(res => {
+                if (res.status === 'success') {
+                    showToast(res.message, 'success');
+                } else {
+                    showToast(res.message || `Exit failed for ${symbol}`, 'error');
+                }
+            })
+            .catch(err => {
+                console.error("Exit call error:", err);
+                showToast(`Exit failed for ${symbol}: connection error`, 'error');
+            })
+            .finally(() => {
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            });
+        }
+
         // Live Polls (Telemetry Updates)
         setInterval(function(){
             fetch('/api/data').then(r => r.json()).then(d => {
@@ -358,11 +391,11 @@
                         const buySellClass = o.transaction_type === 'BUY' ? 'status-buy' : 'status-sell';
                         const statusClass = o.status === 'COMPLETE' ? 'status-complete' : (o.status === 'REJECTED' || o.status === 'CANCELLED' ? 'status-rejected' : 'status-pending');
                         const formattedPrice = o.price > 0 ? `₹${o.price.toFixed(2)}` : 'Market';
-                        const formattedTrigger = o.trigger_price > 0 ? `₹${o.trigger_price.toFixed(2)}` : '—';
+                        const formattedTrigger = o.trigger_price > 0 ? `₹${o.trigger_price.toFixed(2)}` : '-';
                         html += `<tr>
-                            <td style="font-family: monospace; font-size: 0.85em; color: #8b949e; padding: 10px;">${o.order_id}</td>
+                            <td style="font-weight: 500; color: #8b949e; padding: 10px;">#${o.order_id}</td>
                             <td style="font-weight: 600; color: #c9d1d9; padding: 10px;">${o.symbol}</td>
-                            <td style="padding: 10px;"><span class="badge ${buySellClass}">${o.transaction_type}</span></td>
+                            <td style="padding: 10px;"><span class="badge ${buySellClass}">${o.transaction_type}</span> <span style="font-size:0.8em; color:#8b949e;">(${o.order_type})</span></td>
                             <td style="text-align: center; color: #c9d1d9; padding: 10px;">${o.quantity}</td>
                             <td style="color: #c9d1d9; padding: 10px;">${formattedPrice}</td>
                             <td style="color: #c9d1d9; padding: 10px;">${formattedTrigger}</td>
@@ -380,7 +413,7 @@
                     const tbody = document.getElementById('kite-positions-rows');
                     if (!tbody) return;
                     if (!data.positions || data.positions.length === 0) {
-                        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:20px; color:#8b949e;">No active positions today.</td></tr>`;
+                        tbody.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:20px; color:#8b949e;">No active positions today.</td></tr>`;
                         return;
                     }
                     let html = '';
@@ -388,13 +421,115 @@
                         const buySellClass = p.quantity >= 0 ? 'status-buy' : 'status-sell';
                         const pnlClass = p.pnl >= 0 ? 'pnl-profit' : 'pnl-loss';
                         const formattedPnl = p.pnl >= 0 ? `+₹${p.pnl.toFixed(2)}` : `-₹${Math.abs(p.pnl).toFixed(2)}`;
-                        html += `<tr>
-                            <td style="font-weight: 600; color: #c9d1d9; padding: 10px;">${p.symbol}</td>
-                            <td style="padding: 10px;"><span class="badge ${buySellClass}">${p.quantity >= 0 ? 'LONG' : 'SHORT'}</span></td>
-                            <td style="text-align: center; color: #c9d1d9; padding: 10px;">${Math.abs(p.quantity)}</td>
-                            <td style="color: #c9d1d9; padding: 10px;">₹${p.average_price.toFixed(2)}</td>
-                            <td style="color: #c9d1d9; padding: 10px;">₹${p.last_price.toFixed(2)}</td>
-                            <td class="${pnlClass}" style="font-weight: 700; padding: 10px;">${formattedPnl}</td>
+                        
+                        // OCO Protection badge
+                        const ocoBadge = p.ghost_oco_active 
+                            ? `<span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); font-size: 0.7em; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 3px; font-weight: 700; text-shadow: 0 0 8px rgba(16, 185, 129, 0.4);"><span style="animation: pulse 1.5s infinite; width: 6px; height: 6px; border-radius: 50%; background: #10b981;"></span>🛡️ OCO ACTIVE</span>`
+                            : `<span class="badge" style="background: rgba(239, 68, 68, 0.1); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.2); font-size: 0.7em; padding: 2px 6px; border-radius: 4px; font-weight: 500;">⚠️ NO OCO</span>`;
+                        
+                        // Target / SL
+                        const targetText = p.target_price ? `🎯 ₹${p.target_price.toFixed(2)}` : `<span style="color: #ff7b72; opacity:0.7;">No Target Order</span>`;
+                        const slText = p.sl_price ? `🛑 ₹${p.sl_price.toFixed(2)}` : `<span style="color: #ff7b72; opacity:0.7;">No SL Order</span>`;
+                        const adrText = p.adr ? `<div style="font-size: 0.75em; color: #8b949e; margin-top: 4px;">ADR: ${p.adr.toFixed(2)}% (₹${p.adr_abs.toFixed(2)})</div>` : '';
+                        
+                        // Progress bar calculations
+                        let progressBarHtml = '<div style="color: #8b949e; font-size: 0.8em; font-style: italic;">No active OCO orders.</div>';
+                        if (p.target_price && p.sl_price) {
+                            const range = Math.abs(p.target_price - p.sl_price);
+                            let percent = 0;
+                            if (range > 0) {
+                                if (p.quantity > 0) {
+                                    percent = ((p.last_price - p.sl_price) / range) * 100;
+                                } else {
+                                    percent = ((p.sl_price - p.last_price) / range) * 100;
+                                }
+                                percent = Math.max(0, Math.min(100, percent));
+                            }
+                            
+                            const progressColor = p.pnl >= 0 ? '#10b981' : '#ef4444';
+                            progressBarHtml = `
+                                <div style="width: 100%; display: flex; flex-direction: column; gap: 4px; padding: 0 5px;">
+                                    <div style="display: flex; justify-content: space-between; font-size: 0.7em; color: #8b949e;">
+                                        <span>SL (${p.sl_price.toFixed(1)})</span>
+                                        <span style="font-weight: 700; color: ${progressColor}">${percent.toFixed(0)}%</span>
+                                        <span>Tgt (${p.target_price.toFixed(1)})</span>
+                                    </div>
+                                    <div style="width: 100%; height: 6px; background: rgba(255, 255, 255, 0.08); border-radius: 3px; position: relative; overflow: hidden; border: 1px solid rgba(255, 255, 255, 0.05);">
+                                        <div style="height: 100%; width: ${percent}%; background: linear-gradient(90deg, #38bdf8, ${progressColor}); border-radius: 3px; transition: width 0.3s ease;"></div>
+                                    </div>
+                                </div>
+                            `;
+                        } else if (p.adr_abs) {
+                            const estimatedSL = p.quantity > 0 ? p.average_price - p.adr_abs : p.average_price + p.adr_abs;
+                            const estimatedTarget = p.quantity > 0 ? p.average_price + p.adr_abs * 1.5 : p.average_price - p.adr_abs * 1.5;
+                            const range = Math.abs(estimatedTarget - estimatedSL);
+                            let percent = 0;
+                            if (range > 0) {
+                                if (p.quantity > 0) {
+                                    percent = ((p.last_price - estimatedSL) / range) * 100;
+                                } else {
+                                    percent = ((estimatedSL - p.last_price) / range) * 100;
+                                }
+                                percent = Math.max(0, Math.min(100, percent));
+                            }
+                            const progressColor = p.pnl >= 0 ? '#10b981' : '#ef4444';
+                            progressBarHtml = `
+                                <div style="width: 100%; display: flex; flex-direction: column; gap: 4px; padding: 0 5px;">
+                                    <div style="display: flex; justify-content: space-between; font-size: 0.7em; color: #8b949e;">
+                                        <span style="opacity: 0.6;">Est. SL</span>
+                                        <span style="font-weight: 700; color: ${progressColor}">${percent.toFixed(0)}% (Est.)</span>
+                                        <span style="opacity: 0.6;">Est. Tgt</span>
+                                    </div>
+                                    <div style="width: 100%; height: 6px; background: rgba(255, 255, 255, 0.08); border-radius: 3px; position: relative; overflow: hidden;">
+                                        <div style="height: 100%; width: ${percent}%; background: linear-gradient(90deg, #ff7b72, ${progressColor}); border-radius: 3px; transition: width 0.3s ease;"></div>
+                                    </div>
+                                </div>
+                            `;
+                        }
+                        
+                        // Risk Info
+                        const riskWarningGlow = p.risk_pct > 80 ? 'text-shadow: 0 0 10px rgba(239, 68, 68, 0.6); font-weight: 700; color: #f87171;' : '';
+                        const riskHtml = `
+                            <div style="font-size: 0.75em; color: #8b949e; margin-top: 4px; text-align: right;">
+                                Risk: <span style="${riskWarningGlow}">₹${p.allocated_risk.toFixed(0)} (${p.risk_pct}%)</span>
+                            </div>
+                        `;
+                        
+                        // Exit Button
+                        const exitBtnHtml = `
+                            <td style="padding: 10px; text-align: center; vertical-align: middle;">
+                                <button class="btn" onclick="triggerSingleExit('${p.symbol}')" style="padding: 6px 10px; font-size: 0.75em; font-weight: 700; background: linear-gradient(135deg, #ef4444, #b91c1c); color: white; border: none; border-radius: 4px; cursor: pointer; transition: all 0.2s ease; box-shadow: 0 2px 6px rgba(239, 68, 68, 0.2); display: inline-flex; align-items: center; justify-content: center; width: 100%; max-width: 80px;">
+                                    ⚡ EXIT
+                                </button>
+                            </td>
+                        `;
+                        
+                        html += `<tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.05);">
+                            <td style="padding: 12px 10px; vertical-align: middle;">
+                                <div style="font-weight: 700; color: #c9d1d9; font-size: 0.95em;">${p.symbol}</div>
+                                <div style="margin-top: 4px;">${ocoBadge}</div>
+                            </td>
+                            <td style="padding: 12px 10px; vertical-align: middle;">
+                                <span class="badge ${buySellClass}" style="font-weight: 700; padding: 2px 6px; border-radius: 4px; font-size: 0.75em;">${p.quantity >= 0 ? 'LONG' : 'SHORT'}</span>
+                                <div style="font-size: 0.85em; color: #c9d1d9; margin-top: 4px; font-weight: 600;">${Math.abs(p.quantity)} shares</div>
+                            </td>
+                            <td style="padding: 12px 10px; vertical-align: middle; font-size: 0.88em; line-height: 1.4;">
+                                <div style="color: #8b949e;">Avg: <span style="color: #c9d1d9; font-weight: 500;">₹${p.average_price.toFixed(2)}</span></div>
+                                <div>LTP: <span style="color: #58a6ff; font-weight: 700;">₹${p.last_price.toFixed(2)}</span></div>
+                            </td>
+                            <td style="padding: 12px 10px; vertical-align: middle; font-size: 0.82em; line-height: 1.4;">
+                                <div style="color: #10b981; font-weight: 600;">${targetText}</div>
+                                <div style="color: #ef4444; font-weight: 600; margin-top: 2px;">${slText}</div>
+                                ${adrText}
+                            </td>
+                            <td style="padding: 12px 10px; vertical-align: middle; text-align: center;">
+                                ${progressBarHtml}
+                            </td>
+                            <td style="padding: 12px 10px; text-align: right; vertical-align: middle;">
+                                <div class="${pnlClass}" style="font-size: 1.05em; font-weight: 800; text-shadow: 0 0 10px rgba(0, 255, 0, 0.1);">${formattedPnl}</div>
+                                ${riskHtml}
+                            </td>
+                            ${exitBtnHtml}
                         </tr>`;
                     });
                     tbody.innerHTML = html;
@@ -403,7 +538,7 @@
                 const tbodyOrd = document.getElementById('kite-orders-rows');
                 const tbodyPos = document.getElementById('kite-positions-rows');
                 if (tbodyOrd) tbodyOrd.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:20px; color:#8b949e;">[ Kite API Connection Inactive. Please authorize in sidebar. ]</td></tr>`;
-                if (tbodyPos) tbodyPos.innerHTML = `<tr><td colspan="6" style="text-align:center; padding:20px; color:#8b949e;">[ Kite API Connection Inactive. Please authorize in sidebar. ]</td></tr>`;
+                if (tbodyPos) tbodyPos.innerHTML = `<tr><td colspan="7" style="text-align:center; padding:20px; color:#8b949e;">[ Kite API Connection Inactive. Please authorize in sidebar. ]</td></tr>`;
             }
             
             fetch('/api/logs').then(r => r.json()).then(data => {
@@ -615,18 +750,19 @@
                     <div id="kite-tab-positions" style="display: block;">
                         <table style="width: 100%; border-collapse: collapse;">
                             <thead>
-                                <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.08); text-align: left; font-size: 0.85em; color: #8b949e;">
-                                    <th style="padding: 10px;">Symbol</th>
-                                    <th style="padding: 10px;">Type</th>
-                                    <th style="padding: 10px; text-align: center;">Qty</th>
-                                    <th style="padding: 10px;">Avg Price</th>
-                                    <th style="padding: 10px;">LTP</th>
-                                    <th style="padding: 10px;">PnL</th>
+                                <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.08); text-align: left; font-size: 0.82em; color: #8b949e; text-transform: uppercase; letter-spacing: 0.05em;">
+                                    <th style="padding: 12px 10px;">Symbol & Protection</th>
+                                    <th style="padding: 12px 10px;">Type & Qty</th>
+                                    <th style="padding: 12px 10px;">Avg / LTP</th>
+                                    <th style="padding: 12px 10px;">Target / SL</th>
+                                    <th style="padding: 12px 10px; text-align: center; width: 25%;">Live Telemetry Progress</th>
+                                    <th style="padding: 12px 10px; text-align: right;">PnL & Risk</th>
+                                    <th style="padding: 12px 10px; text-align: center;">Action</th>
                                 </tr>
                             </thead>
                             <tbody id="kite-positions-rows">
                                 <tr>
-                                    <td colspan="6" style="text-align: center; padding: 20px; color: #8b949e;">[ Awaiting account synchronization... ]</td>
+                                    <td colspan="7" style="text-align: center; padding: 25px; color: #8b949e; font-style: italic;">[ Awaiting account synchronization... ]</td>
                                 </tr>
                             </tbody>
                         </table>

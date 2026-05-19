@@ -675,7 +675,88 @@ async def api_kite_orders():
 @app.get("/api/kite/positions")
 async def api_kite_positions():
     positions = kite_auth_manager.get_kite_positions()
-    return JSONResponse({"positions": positions})
+    orders = kite_auth_manager.get_kite_orders()
+    
+    enriched_positions = []
+    for p in positions:
+        symbol = p.get("symbol")
+        qty = p.get("quantity", 0)
+        avg_price = p.get("average_price", 0.0)
+        last_price = p.get("last_price", 0.0)
+        
+        # 1. Match active orders for target and SL
+        target_price = None
+        target_order_id = None
+        sl_price = None
+        sl_order_id = None
+        
+        # In MIS:
+        # If long (qty > 0): target is a pending SELL LIMIT order, SL is a pending SELL SL/SL-M order
+        # If short (qty < 0): target is a pending BUY LIMIT order, SL is a pending BUY SL/SL-M order
+        expected_tx = "SELL" if qty > 0 else "BUY"
+        
+        for o in orders:
+            if o.get("symbol") == symbol and o.get("status") in ["OPEN", "TRIGGER PENDING"]:
+                if o.get("transaction_type") == expected_tx:
+                    otype = o.get("order_type")
+                    if otype == "LIMIT":
+                        target_price = o.get("price")
+                        target_order_id = o.get("order_id")
+                    elif otype in ["SL", "SL-M"]:
+                        sl_price = o.get("trigger_price") or o.get("price")
+                        sl_order_id = o.get("order_id")
+        
+        # 2. Get ADR values from Fyers cache
+        fyers_sym = None
+        for s in fyers_cache.data_5m.keys():
+            if symbol in s:
+                fyers_sym = s
+                break
+        
+        adr_val = None
+        adr_abs_val = None
+        if fyers_sym:
+            ind_5m = fyers_cache.data_5m.get(fyers_sym, [])
+            if ind_5m:
+                last_ind = ind_5m[-1]
+                adr_val = last_ind.get("adr")
+                adr_abs_val = last_ind.get("adr_abs")
+        
+        # 3. Calculate Risk Allocated & Risk %
+        allocated_risk = 0.0
+        risk_pct = 0.0
+        
+        if qty != 0:
+            effective_sl = sl_price
+            if not effective_sl and adr_abs_val:
+                effective_sl = avg_price - adr_abs_val if qty > 0 else avg_price + adr_abs_val
+            
+            if effective_sl:
+                allocated_risk = abs(qty * (avg_price - effective_sl))
+                # Base on maximum ₹2,500 absolute risk limit
+                risk_pct = min(100.0, (allocated_risk / 2500.0) * 100.0)
+        
+        ghost_oco_active = (target_order_id is not None) and (sl_order_id is not None)
+        
+        enriched_positions.append({
+            "symbol": symbol,
+            "quantity": qty,
+            "average_price": avg_price,
+            "last_price": last_price,
+            "pnl": p.get("pnl", 0.0),
+            "product": p.get("product"),
+            "target_price": target_price,
+            "target_order_id": target_order_id,
+            "sl_price": sl_price,
+            "sl_order_id": sl_order_id,
+            "ghost_oco_active": ghost_oco_active,
+            "adr": adr_val,
+            "adr_abs": adr_abs_val,
+            "allocated_risk": round(allocated_risk, 2),
+            "risk_pct": round(risk_pct, 1)
+        })
+        
+    return JSONResponse({"positions": enriched_positions})
 
 @app.post("/api/kite/panic")
 async def api_kite_panic():
@@ -684,6 +765,16 @@ async def api_kite_panic():
         return JSONResponse(res, status_code=500)
     elif res.get("status") == "partial":
         return JSONResponse(res, status_code=207)
+    return JSONResponse(res)
+
+@app.post("/api/kite/exit_position")
+async def api_kite_exit_position(payload: dict):
+    symbol = payload.get("symbol")
+    if not symbol:
+        return JSONResponse({"status": "error", "message": "Symbol is required"}, status_code=400)
+    res = kite_auth_manager.exit_single_position(symbol)
+    if res.get("status") == "error":
+        return JSONResponse(res, status_code=500)
     return JSONResponse(res)
 
 
