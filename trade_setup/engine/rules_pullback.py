@@ -16,9 +16,12 @@ def evaluate_pullback_rules(self, item):
 
     # 1. Fetch indicators logs
     symbol_rows = []
+    today_str = datetime.now().strftime("%Y-%m-%d")
     if config.FYERS_INDICATORS_5M in self.memory_logs:
         for row in self.memory_logs[config.FYERS_INDICATORS_5M]:
             if len(row) < 11:
+                continue
+            if not row[0].startswith(today_str):
                 continue
             sym = row[1]
             row_ticker = sym.split(":")[1].split("-EQ")[0] if ":" in sym else sym
@@ -44,12 +47,6 @@ def evaluate_pullback_rules(self, item):
     
     # 2. Live Price Check
     price = latest_indicators["price"]
-    if not self.dry_run and self.kite:
-        try:
-            ltp_res = self.kite.ltp(f"NSE:{base_symbol}")
-            price = float(ltp_res[f"NSE:{base_symbol}"]["last_price"])
-        except Exception as e:
-            print(f"⚠️ Failed to fetch live price from Kite for {base_symbol}: {e}")
 
     # 3. Market Time Guard
     now = datetime.now().time()

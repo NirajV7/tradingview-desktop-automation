@@ -7,13 +7,34 @@ import config
 def get_orb_range_from_logs(self, symbol):
     """
     Parses closed Fyers 15m logs to capture the first 15-minute candle range (9:15 AM - 9:30 AM).
+    Guarded to only parse today's logs. Falls back to shared data/orb_ranges.json for dynamically added radar stocks.
     """
     try:
+        # 1. Primary Fallback: Check shared data/orb_ranges.json populated by the dashboard Fyers history updater
+        import json
+        path = os.path.join("data", "orb_ranges.json")
+        if os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    shared_ranges = json.load(f)
+                    key = symbol.upper()
+                    if key in shared_ranges:
+                        return {
+                            "high": float(shared_ranges[key]["high"]),
+                            "low": float(shared_ranges[key]["low"])
+                        }
+            except Exception as e:
+                print(f"⚠️ Error reading shared ORB ranges: {e}")
+
+        # 2. Log-based check (for pre-market watchlist symbols with active log files)
         target_symbol = f"NSE:{symbol}-EQ"
         prices = []
+        today_str = datetime.now().strftime("%Y-%m-%d")
         
         for row in self.memory_logs[config.FYERS_LOG_15M]:
             if len(row) < 3:
+                continue
+            if not row[0].startswith(today_str):
                 continue
             # timestamp, symbol, last_price, volume, buy_qty, sell_qty
             timestamp_str, row_sym, ltp = row[0], row[1], row[2]
@@ -38,11 +59,16 @@ def get_orb_range_from_logs(self, symbol):
 
 def get_volume_baseline(self, symbol):
     """
-    Calculates the Average Volume over the last 20 completed 5-minute candles.
+    Calculates the Average Volume over the last 20 completed 5-minute candles of today.
     """
     try:
         target_symbol = f"NSE:{symbol}-EQ"
-        volumes = [float(row[3]) for row in self.memory_logs[config.FYERS_LOG_5M] if len(row) >= 4 and row[1] == target_symbol]
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        
+        volumes = [
+            float(row[3]) for row in self.memory_logs[config.FYERS_LOG_5M] 
+            if len(row) >= 4 and row[1] == target_symbol and row[0].startswith(today_str)
+        ]
         
         # Calculate consecutive differences to get the actual 5-minute candle volumes
         candle_volumes = []
@@ -65,11 +91,16 @@ def get_volume_baseline(self, symbol):
 
 def get_volume_baseline_15m(self, symbol):
     """
-    Calculates the Average Volume over the last 20 completed 15-minute candles.
+    Calculates the Average Volume over the last 20 completed 15-minute candles of today.
     """
     try:
         target_symbol = f"NSE:{symbol}-EQ"
-        volumes = [float(row[3]) for row in self.memory_logs[config.FYERS_LOG_15M] if len(row) >= 4 and row[1] == target_symbol]
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        
+        volumes = [
+            float(row[3]) for row in self.memory_logs[config.FYERS_LOG_15M] 
+            if len(row) >= 4 and row[1] == target_symbol and row[0].startswith(today_str)
+        ]
         
         # Calculate consecutive differences to get the actual 15-minute candle volumes
         candle_volumes = []
@@ -92,11 +123,16 @@ def get_volume_baseline_15m(self, symbol):
 
 def get_tick_spread_volume(self, symbol):
     """
-    Calculates cumulative buy and sell volume from the last 50 raw tick logs (last 1 minute).
+    Calculates cumulative buy and sell volume from today's raw tick logs (last 50 ticks / 1 min).
     """
     try:
         target_symbol = f"NSE:{symbol}-EQ"
-        ticks = [(float(row[4]), float(row[5])) for row in self.memory_logs[config.FYERS_LOG] if len(row) >= 6 and row[1] == target_symbol]
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        
+        ticks = [
+            (float(row[4]), float(row[5])) for row in self.memory_logs[config.FYERS_LOG] 
+            if len(row) >= 6 and row[1] == target_symbol and row[0].startswith(today_str)
+        ]
         
         recent_ticks = ticks[-50:]
         if len(recent_ticks) < 10:
@@ -113,7 +149,10 @@ def get_daily_open_price(self, symbol):
     try:
         if not os.path.exists(config.FYERS_LOG):
             return None
+        today_str = datetime.now().strftime("%Y-%m-%d")
         df = pd.read_csv(config.FYERS_LOG)
+        # Filter for today's rows
+        df = df[df["timestamp"].str.startswith(today_str)]
         sym_df = df[df["symbol"] == f"NSE:{symbol}-EQ"]
         if sym_df.empty:
             return None

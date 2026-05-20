@@ -1,11 +1,37 @@
 import time
 
+def get_tick_size(price):
+    """Calculates the dynamic NSE tick size based on the stock's price range."""
+    if price < 250:
+        return 0.01
+    elif price <= 1000:
+        return 0.05
+    elif price <= 5000:
+        return 0.10
+    elif price <= 10000:
+        return 0.50
+    elif price <= 20000:
+        return 1.00
+    else:
+        return 5.00
+
+def round_to_tick(price, tick_size=None):
+    """Rounds a price to the nearest tick size increment to prevent Zerodha order rejections."""
+    if tick_size is None:
+        tick_size = get_tick_size(price)
+    return round(round((price + 1e-9) / tick_size) * tick_size, 2)
+
 def place_kite_bracket_defense(self, symbol, quantity, entry_price, stop_loss, target):
     """Places primary MIS entry and pending SL stop-loss order in Zerodha Kite."""
     try:
+        # Pre-round all inputs to their correct tick size
+        entry_price = round_to_tick(entry_price)
+        stop_loss = round_to_tick(stop_loss)
+        target = round_to_tick(target)
+
         # 1. Primary Entry Order (Using Marketable LIMIT order to comply with Zerodha API protection)
         print(f"🛒 Placing Primary MIS Entry Order for {symbol}...")
-        limit_price = round(round((entry_price * 1.005) / 0.05) * 0.05, 2)
+        limit_price = round_to_tick(entry_price * 1.005)
         entry_order_id = self.kite.place_order(
             variety=self.kite.VARIETY_REGULAR,
             exchange=self.kite.EXCHANGE_NSE,
@@ -138,9 +164,14 @@ def place_kite_bracket_defense(self, symbol, quantity, entry_price, stop_loss, t
 def place_kite_sell_bracket_defense(self, symbol, quantity, entry_price, stop_loss, target):
     """Places primary MIS sell entry and pending BUY SL stop-loss order in Zerodha Kite."""
     try:
+        # Pre-round all inputs to their correct tick size
+        entry_price = round_to_tick(entry_price)
+        stop_loss = round_to_tick(stop_loss)
+        target = round_to_tick(target)
+
         # 1. Primary Entry Order (Using Marketable LIMIT order to comply with Zerodha API protection)
         print(f"🛒 Placing Primary MIS Sell Entry Order for {symbol}...")
-        limit_price = round(round((entry_price * 0.995) / 0.05) * 0.05, 2)
+        limit_price = round_to_tick(entry_price * 0.995)
         entry_order_id = self.kite.place_order(
             variety=self.kite.VARIETY_REGULAR,
             exchange=self.kite.EXCHANGE_NSE,

@@ -1,3 +1,5 @@
+from trade_setup.engine.orders import round_to_tick
+
 def execute_order_disciplines(self, symbol, price, stop_loss):
     """Calculates size, targets, and routes orders to Zerodha Kite."""
     if symbol in self.active_trades:
@@ -36,7 +38,7 @@ def execute_order_disciplines(self, symbol, price, stop_loss):
                 "variety": "regular",
                 "product": "MIS",
                 "order_type": "LIMIT",
-                "price": round(round((price * 1.005) / 0.05) * 0.05, 2),
+                "price": round_to_tick(price * 1.005),
                 "quantity": quantity
             }]
             margin_detail = self.kite.order_margins(order_param)
@@ -121,7 +123,7 @@ def execute_sell_order_disciplines(self, symbol, price, stop_loss):
                 "variety": "regular",
                 "product": "MIS",
                 "order_type": "LIMIT",
-                "price": round(round((price * 0.995) / 0.05) * 0.05, 2),
+                "price": round_to_tick(price * 0.995),
                 "quantity": quantity
             }]
             margin_detail = self.kite.order_margins(order_param)
@@ -237,7 +239,7 @@ def execute_radar_buy_disciplines(self, symbol, price, pullback_low, orb_high):
                 "variety": "regular",
                 "product": "MIS",
                 "order_type": "LIMIT",
-                "price": round(round((price * 1.005) / 0.05) * 0.05, 2),
+                "price": round_to_tick(price * 1.005),
                 "quantity": quantity
             }]
             margin_detail = self.kite.order_margins(order_param)
@@ -262,7 +264,7 @@ def execute_radar_buy_disciplines(self, symbol, price, pullback_low, orb_high):
 
     print(f"\n🚀 >>> RADAR BUY TRIGGER DETECTED FOR {symbol} <<< 🚀")
     print(f"💵 Entry: ₹{price:.2f} | 🛡️ Stop Loss: ₹{stop_loss:.2f} (SL Width: ₹{sl_width:.2f})")
-    print(f"📊 Sizing: Quantity = {quantity} shares (Max Risk: ₹2500)")
+    print(f"📊 Sizing: Quantity = {quantity} shares (Max Risk: ₹{self.risk_per_trade})")
     print(f"🎯 Profit Target: ₹{target:.2f} (1:2 R:R)")
 
     if self.dry_run:
@@ -327,7 +329,7 @@ def execute_radar_sell_disciplines(self, symbol, price, pullback_high, orb_low):
                 "variety": "regular",
                 "product": "MIS",
                 "order_type": "LIMIT",
-                "price": round(round((price * 0.995) / 0.05) * 0.05, 2),
+                "price": round_to_tick(price * 0.995),
                 "quantity": quantity
             }]
             margin_detail = self.kite.order_margins(order_param)
@@ -352,7 +354,7 @@ def execute_radar_sell_disciplines(self, symbol, price, pullback_high, orb_low):
 
     print(f"\n🚀 >>> RADAR SELL TRIGGER DETECTED FOR {symbol} <<< 🚀")
     print(f"💵 Entry: ₹{price:.2f} | 🛡️ Stop Loss: ₹{stop_loss:.2f} (SL Width: ₹{sl_width:.2f})")
-    print(f"📊 Sizing: Quantity = {quantity} shares (Max Risk: ₹2500)")
+    print(f"📊 Sizing: Quantity = {quantity} shares (Max Risk: ₹{self.risk_per_trade})")
     print(f"🎯 Profit Target: ₹{target:.2f} (1:2 R:R)")
 
     if self.dry_run:

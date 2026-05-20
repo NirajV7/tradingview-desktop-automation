@@ -31,9 +31,8 @@ def save_radar_watchlist(watchlist):
         json.dump(watchlist, f, indent=4)
 
 @router.post("/api/radar/alert")
-async def api_radar_alert(request: Request):
+def api_radar_alert(data: dict):
     try:
-        data = await request.json()
         symbol = data.get("symbol")
         ltp = data.get("ltp")
         volume_ratio = data.get("volume_ratio")

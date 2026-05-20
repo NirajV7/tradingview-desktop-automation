@@ -7,10 +7,13 @@ def evaluate_live_sell_rules(self, symbol):
     try:
         latest_row = None
         all_symbol_rows = []
+        today_str = datetime.now().strftime("%Y-%m-%d")
         
         # Map indices: timestamp(0), symbol(1), price(2), ema20(3), ema50(4), ema200(5), rsi(6), vwap(7), volume(8), adr(9), adr_abs(10)
         for row in self.memory_logs[config.FYERS_INDICATORS_5M]:
             if len(row) < 11:
+                continue
+            if not row[0].startswith(today_str):
                 continue
             sym = row[1]
             row_ticker = sym.split(":")[1].split("-EQ")[0] if ":" in sym else sym

@@ -3,6 +3,7 @@ import json
 from datetime import datetime
 from kiteconnect import KiteConnect
 from config import KITE_TOKEN_FILE, KITE_API_KEY, KITE_API_SECRET, KITE_REDIRECT_URL
+from trade_setup.engine.orders import get_tick_size, round_to_tick
 
 def check_kite_auth():
     """Validates local Kite token. Returns (needs_login, auth_url)."""
@@ -147,10 +148,21 @@ def get_kite_orders():
                 return []
     return []
 
-def get_kite_positions():
-    """Fetches list of active day & net positions from Zerodha Kite."""
+import time
+
+_positions_cache = None
+_positions_cache_time = 0.0
+
+def get_kite_positions(force=False):
+    """Fetches list of active day & net positions from Zerodha Kite (cached for 10 seconds)."""
+    global _positions_cache, _positions_cache_time
     if not KITE_API_KEY:
         return []
+        
+    now = time.time()
+    if not force and _positions_cache is not None and (now - _positions_cache_time) < 10.0:
+        return _positions_cache
+        
     if os.path.exists(KITE_TOKEN_FILE):
         with open(KITE_TOKEN_FILE, "r") as f:
             try:
@@ -178,6 +190,8 @@ def get_kite_positions():
                             "buy_price": p.get("buy_price", 0.0),
                             "sell_price": p.get("sell_price", 0.0)
                         })
+                    _positions_cache = formatted_positions
+                    _positions_cache_time = now
                     return formatted_positions
             except Exception as e:
                 print(f"Error fetching Kite positions: {e}")
@@ -200,11 +214,11 @@ def place_marketable_limit_exit(kite, exchange, symbol, tx_type, quantity, produ
             if not last_price:
                 raise ValueError(f"Could not retrieve last price for {ltp_key}")
 
-        # Apply 0.5% protection buffer for instant fill
+        # Apply 0.5% protection buffer for instant fill, using dynamic NSE tick size
         if tx_type == "SELL":
-            limit_price = round(round((last_price * 0.995) / 0.05) * 0.05, 2)
+            limit_price = round_to_tick(last_price * 0.995)
         else:
-            limit_price = round(round((last_price * 1.005) / 0.05) * 0.05, 2)
+            limit_price = round_to_tick(last_price * 1.005)
 
         return kite.place_order(
             variety="regular",

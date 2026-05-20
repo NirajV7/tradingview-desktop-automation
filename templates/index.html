@@ -71,68 +71,77 @@
                 };
                 let html = '';
                 active.forEach(p => {
-                    const buySellClass = p.quantity >= 0 ? 'status-buy' : 'status-sell';
-                    const pnlClass = p.pnl >= 0 ? 'pnl-profit' : 'pnl-loss';
-                    const formattedPnl = p.pnl >= 0 ? `+₹${p.pnl.toFixed(2)}` : `-₹${Math.abs(p.pnl).toFixed(2)}`;
-                    const ocoBadge = p.ghost_oco_active
-                        ? `<span style="background:rgba(16,185,129,0.15);color:#10b981;border:1px solid rgba(16,185,129,0.3);font-size:0.68em;padding:1px 5px;border-radius:3px;font-weight:700;">🛡️ OCO</span>`
-                        : `<span style="background:rgba(239,68,68,0.1);color:#f87171;border:1px solid rgba(239,68,68,0.2);font-size:0.68em;padding:1px 5px;border-radius:3px;font-weight:500;">NO OCO</span>`;
-                    const rrColor = p.is_estimated_rr ? '#f59e0b' : '#38bdf8';
-                    const rrBorder = p.is_estimated_rr ? 'rgba(245,158,11,0.3)' : 'rgba(56,189,248,0.3)';
-                    const rrBadge = `<span style="background:rgba(56,189,248,0.08);color:${rrColor};border:1px solid ${rrBorder};font-size:0.68em;padding:1px 5px;border-radius:3px;font-weight:700;">${p.is_estimated_rr ? '~' : ''}1:${p.rr_ratio.toFixed(1)}</span>`;
+                    try {
+                        const buySellClass = p.quantity >= 0 ? 'status-buy' : 'status-sell';
+                        const pnlClass = p.pnl >= 0 ? 'pnl-profit' : 'pnl-loss';
+                        const formattedPnl = p.pnl >= 0 ? `+₹${p.pnl.toFixed(2)}` : `-₹${Math.abs(p.pnl).toFixed(2)}`;
+                        const ocoBadge = p.ghost_oco_active
+                            ? `<span style="background:rgba(16,185,129,0.15);color:#10b981;border:1px solid rgba(16,185,129,0.3);font-size:0.68em;padding:1px 5px;border-radius:3px;font-weight:700;">🛡️ OCO</span>`
+                            : `<span style="background:rgba(239,68,68,0.1);color:#f87171;border:1px solid rgba(239,68,68,0.2);font-size:0.68em;padding:1px 5px;border-radius:3px;font-weight:500;">NO OCO</span>`;
+                        const rrColor = p.is_estimated_rr ? '#f59e0b' : '#38bdf8';
+                        const rrBorder = p.is_estimated_rr ? 'rgba(245,158,11,0.3)' : 'rgba(56,189,248,0.3)';
+                        const rrBadge = `<span style="background:rgba(56,189,248,0.08);color:${rrColor};border:1px solid ${rrBorder};font-size:0.68em;padding:1px 5px;border-radius:3px;font-weight:700;">${p.is_estimated_rr ? '~' : ''}1:${p.rr_ratio.toFixed(1)}</span>`;
 
-                    let targetHtml = '';
-                    if (p.target_price) {
-                        const tDist = p.dist_to_target_pct !== null ? `+${p.dist_to_target_pct.toFixed(1)}%` : '';
-                        targetHtml = `<div style="display:flex;align-items:center;gap:5px;margin-bottom:5px;">
-                            <span style="color:#10b981;font-weight:700;">🎯 ₹${p.target_price.toFixed(2)}</span>
-                            <span style="font-size:0.75em;color:#6ee7b7;">${tDist}</span>
-                            <span style="font-size:0.68em;color:#10b981;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);padding:1px 4px;border-radius:3px;">${abbr(p.target_status)}</span>
+                        let targetHtml = '';
+                        const displayTarget = p.target_price || p.engine_target;
+                        if (p.target_price) {
+                            const tDist = p.dist_to_target_pct !== null ? `+${p.dist_to_target_pct.toFixed(1)}%` : '';
+                            targetHtml = `<div style="display:flex;align-items:center;gap:5px;margin-bottom:5px;">
+                                <span style="color:#10b981;font-weight:700;">🎯 ₹${p.target_price.toFixed(2)}</span>
+                                <span style="font-size:0.75em;color:#6ee7b7;">${tDist}</span>
+                                <span style="font-size:0.68em;color:#10b981;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);padding:1px 4px;border-radius:3px;">${abbr(p.target_status)}</span>
+                            </div>`;
+                        } else if (p.engine_target) {
+                            const tDist = p.dist_to_target_pct !== null ? `+${p.dist_to_target_pct.toFixed(1)}%` : '';
+                            targetHtml = `<div style="display:flex;align-items:center;gap:5px;margin-bottom:5px;">
+                                <span style="color:#10b981;font-weight:700;">🎯 ₹${p.engine_target.toFixed(2)}</span>
+                                <span style="font-size:0.75em;color:#6ee7b7;">${tDist}</span>
+                                <span style="font-size:0.68em;color:#10b981;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);padding:1px 4px;border-radius:3px;">No Order</span>
+                            </div>`;
+                        } else if (p.adr_abs) {
+                            const estTarget = p.quantity > 0 ? p.average_price + p.adr_abs * 1.5 : p.average_price - p.adr_abs * 1.5;
+                            targetHtml = `<div style="display:flex;align-items:center;gap:5px;margin-bottom:5px;">
+                                <span style="color:#f59e0b;font-weight:600;">🎯 ₹${estTarget.toFixed(2)}</span>
+                                <span style="font-size:0.68em;color:#fbbf24;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.25);padding:1px 4px;border-radius:3px;">Est. · No Order</span>
+                            </div>`;
+                        } else {
+                            targetHtml = `<div style="color:#6b7280;font-size:0.85em;margin-bottom:5px;">🎯 —</div>`;
+                        }
+
+                        // SL Stepper data
+                        const currentSlPrice = p.sl_price || (p.adr_abs ? (p.quantity > 0 ? p.average_price - p.adr_abs : p.average_price + p.adr_abs) : p.average_price);
+                        const txForSl = p.quantity > 0 ? 'SELL' : 'BUY';
+                        const slStep = 0.50; // 50 paise default step
+                        
+                        const displayPrice = inFlightSLs.has(p.symbol) ? inFlightSLs.get(p.symbol) : currentSlPrice;
+                        const isProcessing = inFlightSLs.has(p.symbol);
+                        const colorClass = isProcessing ? '#fbbf24' : (p.sl_price ? '#f87171' : '#ef4444');
+                        const statusBadge = p.sl_price 
+                            ? `<span style="font-size:0.68em;color:#f87171;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);padding:1px 4px;border-radius:3px;">${abbr(p.sl_status)}</span>`
+                            : `<span style="font-size:0.68em;color:#f87171;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);padding:1px 4px;border-radius:3px;animation:flash-warn 1.5s infinite;">Est.</span>`;
+                        
+                        const hiddenInputs = `
+                            <input type="hidden" id="sl-oid-${p.symbol}" value="${p.sl_order_id || ''}">
+                            <input type="hidden" id="sl-qty-${p.symbol}" value="${p.quantity}">
+                            <input type="hidden" id="sl-tx-${p.symbol}" value="${txForSl}">
+                            <input type="hidden" id="sl-prod-${p.symbol}" value="${p.product || 'MIS'}">
+                            <input type="hidden" id="sl-entry-${p.symbol}" value="${p.average_price}">
+                        `;
+
+                        let slHtml = `<div style="display:flex;align-items:center;gap:4px;background:rgba(0,0,0,0.2);padding:3px 6px;border-radius:6px;border:1px solid rgba(255,255,255,0.05);width:fit-content;margin-top:2px;">
+                            ${hiddenInputs}
+                            <button onclick="stepSlChange('${p.symbol}', 'down', ${slStep})" style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);color:#ef4444;border-radius:4px;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-weight:bold;transition:all 0.1s;" onmouseover="this.style.background='rgba(239,68,68,0.3)'" onmouseout="this.style.background='rgba(239,68,68,0.1)'">-</button>
+                            <span id="sl-disp-${p.symbol}" style="color:${colorClass};font-weight:700;font-family:var(--font-mono);min-width:65px;text-align:center;">₹${displayPrice.toFixed(2)}</span>
+                            <button onclick="stepSlChange('${p.symbol}', 'up', ${slStep})" style="background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);color:#22c55e;border-radius:4px;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-weight:bold;transition:all 0.1s;" onmouseover="this.style.background='rgba(34,197,94,0.3)'" onmouseout="this.style.background='rgba(34,197,94,0.1)'">+</button>
+                            <button onclick="stepSlChange('${p.symbol}', 'be', 0)" title="Trail to Break-Even" style="background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.3);color:#60a5fa;border-radius:4px;height:20px;padding:0 5px;font-size:0.7em;display:flex;align-items:center;justify-content:center;cursor:pointer;font-weight:bold;margin-left:2px;transition:all 0.1s;" onmouseover="this.style.background='rgba(59,130,246,0.3)'" onmouseout="this.style.background='rgba(59,130,246,0.1)'">BE</button>
+                            ${statusBadge}
                         </div>`;
-                    } else if (p.adr_abs) {
-                        const estTarget = p.quantity > 0 ? p.average_price + p.adr_abs * 1.5 : p.average_price - p.adr_abs * 1.5;
-                        targetHtml = `<div style="display:flex;align-items:center;gap:5px;margin-bottom:5px;">
-                            <span style="color:#f59e0b;font-weight:600;">🎯 ₹${estTarget.toFixed(2)}</span>
-                            <span style="font-size:0.68em;color:#fbbf24;background:rgba(245,158,11,0.1);border:1px solid rgba(245,158,11,0.25);padding:1px 4px;border-radius:3px;">Est. · No Order</span>
-                        </div>`;
-                    } else {
-                        targetHtml = `<div style="color:#6b7280;font-size:0.85em;margin-bottom:5px;">🎯 —</div>`;
-                    }
 
-                    // SL Stepper data
-                    const currentSlPrice = p.sl_price || (p.adr_abs ? (p.quantity > 0 ? p.average_price - p.adr_abs : p.average_price + p.adr_abs) : p.average_price);
-                    const txForSl = p.quantity > 0 ? 'SELL' : 'BUY';
-                    const slStep = 0.50; // 50 paise default step
-                    
-                    const displayPrice = inFlightSLs.has(p.symbol) ? inFlightSLs.get(p.symbol) : currentSlPrice;
-                    const isProcessing = inFlightSLs.has(p.symbol);
-                    const colorClass = isProcessing ? '#fbbf24' : (p.sl_price ? '#f87171' : '#ef4444');
-                    const statusBadge = p.sl_price 
-                        ? `<span style="font-size:0.68em;color:#f87171;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);padding:1px 4px;border-radius:3px;">${abbr(p.sl_status)}</span>`
-                        : `<span style="font-size:0.68em;color:#f87171;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);padding:1px 4px;border-radius:3px;animation:flash-warn 1.5s infinite;">Est.</span>`;
-                    
-                    const hiddenInputs = `
-                        <input type="hidden" id="sl-oid-${p.symbol}" value="${p.sl_order_id || ''}">
-                        <input type="hidden" id="sl-qty-${p.symbol}" value="${p.quantity}">
-                        <input type="hidden" id="sl-tx-${p.symbol}" value="${txForSl}">
-                        <input type="hidden" id="sl-prod-${p.symbol}" value="${p.product || 'MIS'}">
-                        <input type="hidden" id="sl-entry-${p.symbol}" value="${p.average_price}">
-                    `;
-
-                    let slHtml = `<div style="display:flex;align-items:center;gap:4px;background:rgba(0,0,0,0.2);padding:3px 6px;border-radius:6px;border:1px solid rgba(255,255,255,0.05);width:fit-content;margin-top:2px;">
-                        ${hiddenInputs}
-                        <button onclick="stepSlChange('${p.symbol}', 'down', ${slStep})" style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);color:#ef4444;border-radius:4px;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-weight:bold;transition:all 0.1s;" onmouseover="this.style.background='rgba(239,68,68,0.3)'" onmouseout="this.style.background='rgba(239,68,68,0.1)'">-</button>
-                        <span id="sl-disp-${p.symbol}" style="color:${colorClass};font-weight:700;font-family:var(--font-mono);min-width:65px;text-align:center;">₹${displayPrice.toFixed(2)}</span>
-                        <button onclick="stepSlChange('${p.symbol}', 'up', ${slStep})" style="background:rgba(34,197,94,0.1);border:1px solid rgba(34,197,94,0.3);color:#22c55e;border-radius:4px;width:20px;height:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;font-weight:bold;transition:all 0.1s;" onmouseover="this.style.background='rgba(34,197,94,0.3)'" onmouseout="this.style.background='rgba(34,197,94,0.1)'">+</button>
-                        <button onclick="stepSlChange('${p.symbol}', 'be', 0)" title="Trail to Break-Even" style="background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.3);color:#60a5fa;border-radius:4px;height:20px;padding:0 5px;font-size:0.7em;display:flex;align-items:center;justify-content:center;cursor:pointer;font-weight:bold;margin-left:2px;transition:all 0.1s;" onmouseover="this.style.background='rgba(59,130,246,0.3)'" onmouseout="this.style.background='rgba(59,130,246,0.1)'">BE</button>
-                        ${statusBadge}
-                    </div>`;
-
-                    const adrText = p.adr ? `<div style="font-size: 0.72em; color: #8b949e; border-top: 1px solid rgba(255,255,255,0.05); margin-top: 6px; padding-top: 4px;">ADR: <span style="color: #c9d1d9; font-weight: 600;">${p.adr.toFixed(2)}%</span> (₹${p.adr_abs.toFixed(2)})</div>` : '';
-                    
-                    let progressBarHtml = '<div style="color: #8b949e; font-size: 0.85em; font-style: italic;">No range telemetry.</div>';
-                    if (p.adr_abs && p.adr_exhaustion_pct !== undefined && p.adr_exhaustion_pct !== null) {
-                        const pct = p.adr_exhaustion_pct;
+                        const adrPct = (p.adr && p.adr_abs) ? Number(p.adr).toFixed(2) : '0.00';
+                        const adrAbs = (p.adr && p.adr_abs) ? Number(p.adr_abs).toFixed(2) : '0.00';
+                        const adrText = `<div id="adr-text-sub-${p.symbol}" style="font-size: 0.72em; color: #8b949e; border-top: 1px solid rgba(255,255,255,0.05); margin-top: 6px; padding-top: 4px;">ADR: <span style="color: #c9d1d9; font-weight: 600;">${adrPct}%</span> (₹${adrAbs})</div>`;
+                        
+                        const pct = (p.adr_exhaustion_pct !== undefined && p.adr_exhaustion_pct !== null) ? p.adr_exhaustion_pct : 0;
                         const cappedPct = Math.min(100, Math.max(0, pct));
                         const isExhausted = pct >= 75.0;
                         const barBackground = isExhausted 
@@ -144,16 +153,16 @@
                         const rangeStr = p.today_range !== undefined && p.today_range !== null ? `₹${p.today_range.toFixed(1)}` : '₹0.0';
                         const adrMaxStr = p.adr_abs ? `₹${p.adr_abs.toFixed(1)}` : '₹0.0';
                         
-                        progressBarHtml = `
+                        let progressBarHtml = `
                             <div style="width: 100%; display: flex; flex-direction: column; gap: 4px; padding: 0 5px; position: relative;">
                                 <div style="display: flex; justify-content: space-between; font-size: 0.72em; color: #8b949e; font-weight: 500;">
-                                    <span>Range: <span style="color: #c9d1d9; font-weight: 700;">${rangeStr}</span> / ${adrMaxStr}</span>
-                                    <span style="font-weight: 800; color: ${badgeColor}; ${textShadow}">${pct.toFixed(1)}% ADR</span>
+                                    <span>Range: <span id="adr-range-val-${p.symbol}" data-adr-abs="${p.adr_abs || 0}" style="color: #c9d1d9; font-weight: 700;">${rangeStr}</span> / <span id="adr-max-val-${p.symbol}">${adrMaxStr}</span></span>
+                                    <span id="adr-pct-text-${p.symbol}" style="font-weight: 800; color: ${badgeColor}; ${textShadow}">${pct.toFixed(1)}% ADR</span>
                                 </div>
                                 <div style="width: 100%; height: 8px; background: rgba(255, 255, 255, 0.08); border-radius: 4px; position: relative; border: 1px solid rgba(255, 255, 255, 0.05); overflow: visible;">
                                     <div style="position: absolute; left: 70%; top: -1px; width: 2px; height: 8px; background: #ef4444; z-index: 5;" title="70% ADR: Trailing circuit breaker"></div>
                                     <div style="position: absolute; left: 75%; top: -1px; width: 2px; height: 8px; background: #fbbf24; z-index: 5;" title="75% ADR: Target profit scale-out zone"></div>
-                                    <div style="height: 100%; width: ${cappedPct}%; border-radius: 4px; transition: width 0.3s ease; ${barBackground}"></div>
+                                    <div id="adr-bar-fill-${p.symbol}" style="height: 100%; width: ${cappedPct}%; border-radius: 4px; transition: width 0.3s ease; ${barBackground}"></div>
                                 </div>
                                 <div style="display: flex; justify-content: space-between; font-size: 0.62em; color: #8b949e; opacity: 0.8; margin-top: 2px;">
                                     <span>0%</span>
@@ -163,46 +172,54 @@
                                 </div>
                             </div>
                         `;
-                    }
-                    
-                    const riskGlow = p.risk_pct > 80 ? 'color:#f87171;text-shadow:0 0 10px rgba(239,68,68,0.5);font-weight:700;' : '';
-                    const riskHtml = `<div style="font-size:0.72em;color:#6b7280;margin-top:4px;text-align:right;">Risk: <span style="${riskGlow}">₹${p.allocated_risk.toFixed(0)} (${p.risk_pct}%)</span></div>`;
+                        
+                        // PnL percentage from avg price
+                        const pnlPct = p.average_price > 0 ? ((p.last_price - p.average_price) / p.average_price * 100 * (p.quantity > 0 ? 1 : -1)).toFixed(2) : '0.00';
+                        const pnlPctStr = parseFloat(pnlPct) >= 0 ? `+${pnlPct}%` : `${pnlPct}%`;
+                        
+                        const riskGlow = p.risk_pct > 80 ? 'color:#f87171;text-shadow:0 0 10px rgba(239,68,68,0.5);font-weight:700;' : '';
+                        const riskHtml = `<div style="font-size:0.72em;color:#6b7280;margin-top:4px;text-align:right;">Risk: <span style="${riskGlow}">₹${p.allocated_risk.toFixed(0)} (${p.risk_pct}%)</span></div>`;
 
-                    const exitBtnHtml = `<td style="padding:10px;text-align:center;vertical-align:middle;white-space:nowrap;">
-                        <div style="display:flex;gap:5px;align-items:center;justify-content:center;">
-                            <button class="btn" onclick="triggerPartialScaleOut('${p.symbol}', event)" style="padding:5px 9px;font-size:0.72em;font-weight:700;background:linear-gradient(135deg,#f59e0b,#d97706);color:white;border:none;border-radius:4px;cursor:pointer;box-shadow:0 2px 6px rgba(245,158,11,0.2);">⚖️ 50%</button>
-                            <button class="btn" onclick="triggerSingleExit('${p.symbol}', event)" style="padding:5px 9px;font-size:0.72em;font-weight:700;background:linear-gradient(135deg,#ef4444,#b91c1c);color:white;border:none;border-radius:4px;cursor:pointer;box-shadow:0 2px 6px rgba(239,68,68,0.2);">⚡ EXIT</button>
-                        </div>
-                    </td>`;
-                    
-                    html += `<tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
-                        <td style="padding:12px 10px;vertical-align:middle;">
-                            <div style="font-weight:700;color:#c9d1d9;font-size:0.95em;letter-spacing:0.02em;">${p.symbol}</div>
-                            <div style="margin-top:5px;display:flex;gap:5px;align-items:center;flex-wrap:wrap;">${ocoBadge} ${rrBadge}</div>
-                        </td>
-                        <td style="padding:12px 10px;vertical-align:middle;text-align:center;">
-                            <span class="badge ${buySellClass}" style="font-weight:700;padding:3px 8px;border-radius:4px;font-size:0.78em;">${p.quantity >= 0 ? 'LONG' : 'SHORT'}</span>
-                            <div style="font-size:1em;color:#e2e8f0;margin-top:5px;font-weight:700;font-family:var(--font-mono);">${Math.abs(p.quantity)}<span style="font-size:0.7em;color:#6b7280;font-weight:400;"> qty</span></div>
-                        </td>
-                        <td style="padding:12px 10px;vertical-align:middle;font-size:0.88em;font-family:var(--font-mono);">
-                            <div style="color:#8b949e;font-size:0.72em;text-transform:uppercase;letter-spacing:0.06em;">Avg</div>
-                            <div style="color:#c9d1d9;font-weight:600;margin-bottom:6px;">₹${p.average_price.toFixed(2)}</div>
-                            <div style="color:#8b949e;font-size:0.72em;text-transform:uppercase;letter-spacing:0.06em;">LTP</div>
-                            <div style="color:#58a6ff;font-weight:700;">₹${p.last_price.toFixed(2)}</div>
-                        </td>
-                        <td style="padding:12px 10px;vertical-align:middle;font-size:0.88em;line-height:1.5;">
-                            ${targetHtml}
-                            ${slHtml}
-                        </td>
-                        <td style="padding:12px 10px;vertical-align:middle;">
-                            ${progressBarHtml}
-                        </td>
-                        <td style="padding:12px 10px;vertical-align:middle;text-align:right;">
-                            <div class="${pnlClass}" style="font-size:1.1em;font-weight:800;">${formattedPnl}</div>
-                            ${riskHtml}
-                        </td>
-                        ${exitBtnHtml}
-                    </tr>`;
+                        const exitBtnHtml = `<td style="padding:10px;text-align:center;vertical-align:middle;white-space:nowrap;">
+                            <div style="display:flex;gap:5px;align-items:center;justify-content:center;">
+                                <button class="btn" onclick="triggerPartialScaleOut('${p.symbol}', event)" style="padding:5px 9px;font-size:0.72em;font-weight:700;background:linear-gradient(135deg,#f59e0b,#d97706);color:white;border:none;border-radius:4px;cursor:pointer;box-shadow:0 2px 6px rgba(245,158,11,0.2);">⚖️ 50%</button>
+                                <button class="btn" onclick="triggerSingleExit('${p.symbol}', event)" style="padding:5px 9px;font-size:0.72em;font-weight:700;background:linear-gradient(135deg,#ef4444,#b91c1c);color:white;border:none;border-radius:4px;cursor:pointer;box-shadow:0 2px 6px rgba(239,68,68,0.2);">⚡ EXIT</button>
+                            </div>
+                        </td>`;
+                        
+                        html += `<tr style="border-bottom:1px solid rgba(255,255,255,0.04);">
+                            <td style="padding:12px 10px;vertical-align:middle;">
+                                <div style="font-weight:700;color:#c9d1d9;font-size:0.95em;letter-spacing:0.02em;">${p.symbol}</div>
+                                <div style="margin-top:5px;display:flex;gap:5px;align-items:center;flex-wrap:wrap;">${ocoBadge} ${rrBadge}</div>
+                                ${adrText}
+                            </td>
+                            <td style="padding:12px 10px;vertical-align:middle;text-align:center;">
+                                <span class="badge ${buySellClass}" style="font-weight:700;padding:3px 8px;border-radius:4px;font-size:0.78em;">${p.quantity >= 0 ? 'LONG' : 'SHORT'}</span>
+                                <div style="font-size:1em;color:#e2e8f0;margin-top:5px;font-weight:700;font-family:var(--font-mono);">${Math.abs(p.quantity)}<span style="font-size:0.7em;color:#6b7280;font-weight:400;"> qty</span></div>
+                            </td>
+                            <td style="padding:12px 10px;vertical-align:middle;font-size:0.88em;font-family:var(--font-mono);">
+                                <div style="color:#8b949e;font-size:0.72em;text-transform:uppercase;letter-spacing:0.06em;">Avg</div>
+                                <div style="color:#c9d1d9;font-weight:600;margin-bottom:6px;">₹${p.average_price.toFixed(2)}</div>
+                                <div style="color:#8b949e;font-size:0.72em;text-transform:uppercase;letter-spacing:0.06em;">LTP</div>
+                                <div id="ltp-${p.symbol}" style="color:#58a6ff;font-weight:700;">₹${p.last_price.toFixed(2)}</div>
+                            </td>
+                            <td style="padding:12px 10px;vertical-align:middle;font-size:0.88em;line-height:1.5;">
+                                ${targetHtml}
+                                ${slHtml}
+                            </td>
+                            <td style="padding:12px 10px;vertical-align:middle;">
+                                ${progressBarHtml}
+                            </td>
+                            <td style="padding:12px 10px;vertical-align:middle;text-align:right;">
+                                <div id="pnl-${p.symbol}" class="${pnlClass}" data-avg="${p.average_price}" data-qty="${p.quantity}" style="font-size:1.1em;font-weight:800;">${formattedPnl}</div>
+                                <div id="pnl-pct-${p.symbol}" style="font-size:0.72em;color:${p.pnl >= 0 ? '#6ee7b7' : '#fca5a5'};margin-top:2px;font-weight:600;">${pnlPctStr}</div>
+                                ${riskHtml}
+                            </td>
+                            ${exitBtnHtml}
+                        </tr>`;
+                    } catch (err) {
+                        console.error("Error building active row for " + p.symbol + ":", err);
+                    }
                 });
                 tbody.innerHTML = html;
                 } // end else (active positions)
@@ -710,8 +727,92 @@
             });
         }, 3000);
 
-        // ── Dedicated positions loop: 1.5s for tight live PnL ────────────────
+        // ── Dedicated positions loop: 1.5s for structural data ─────────────
         setInterval(fetchKitePositions, 1500);
+
+        // ── Fast PnL tick: 500ms — updates LTP+PnL cells in-place from Fyers log ──
+        function updatePnlTick() {
+            fetch('/api/kite/ltp').then(r => r.json()).then(data => {
+                (data.ticks || []).forEach(t => {
+                    try {
+                        const ltpEl = document.getElementById('ltp-' + t.symbol);
+                        const pnlEl = document.getElementById('pnl-' + t.symbol);
+                        const pnlPctEl = document.getElementById('pnl-pct-' + t.symbol);
+                        if (ltpEl && t.ltp !== undefined && t.ltp !== null) {
+                            ltpEl.textContent = '₹' + Number(t.ltp).toFixed(2);
+                        }
+                        if (pnlEl && t.pnl !== undefined && t.pnl !== null) {
+                            const isProfit = t.pnl >= 0;
+                            pnlEl.className = isProfit ? 'pnl-profit' : 'pnl-loss';
+                            pnlEl.textContent = isProfit
+                                ? '+₹' + Number(t.pnl).toFixed(2)
+                                : '-₹' + Math.abs(Number(t.pnl)).toFixed(2);
+                            
+                            // Update PnL percentage
+                            if (pnlPctEl) {
+                                const avg = parseFloat(pnlEl.dataset.avg || '0');
+                                const qty = parseInt(pnlEl.dataset.qty || '0');
+                                if (avg > 0 && qty !== 0 && t.ltp !== undefined && t.ltp !== null) {
+                                    const pctVal = ((t.ltp - avg) / avg * 100 * (qty > 0 ? 1 : -1));
+                                    const pctStr = pctVal >= 0 ? `+${pctVal.toFixed(2)}%` : `${pctVal.toFixed(2)}%`;
+                                    pnlPctEl.textContent = pctStr;
+                                    pnlPctEl.style.color = pctVal >= 0 ? '#6ee7b7' : '#fca5a5';
+                                }
+                            }
+                        }
+
+                        // ── Dynamic ADR Meter Update ──
+                        const rangeValEl = document.getElementById('adr-range-val-' + t.symbol);
+                        const pctTextEl = document.getElementById('adr-pct-text-' + t.symbol);
+                        const barFillEl = document.getElementById('adr-bar-fill-' + t.symbol);
+                        const maxValEl = document.getElementById('adr-max-val-' + t.symbol);
+                        const subTextEl = document.getElementById('adr-text-sub-' + t.symbol);
+
+                        if (t.adr_exhaustion_pct !== undefined && t.adr_exhaustion_pct !== null) {
+                            const pct = Number(t.adr_exhaustion_pct);
+                            const cappedPct = Math.min(100, Math.max(0, pct));
+                            
+                            if (rangeValEl && t.today_range !== undefined && t.today_range !== null) {
+                                rangeValEl.textContent = '₹' + Number(t.today_range).toFixed(1);
+                            }
+
+                            if (maxValEl && t.adr_abs !== undefined && t.adr_abs !== null) {
+                                maxValEl.textContent = '₹' + Number(t.adr_abs).toFixed(1);
+                            }
+
+                            if (subTextEl && t.adr !== undefined && t.adr !== null && t.adr_abs !== undefined && t.adr_abs !== null) {
+                                subTextEl.innerHTML = `ADR: <span style="color: #c9d1d9; font-weight: 600;">${Number(t.adr).toFixed(2)}%</span> (₹${Number(t.adr_abs).toFixed(2)})`;
+                            }
+                            
+                            if (pctTextEl) {
+                                pctTextEl.textContent = pct.toFixed(1) + '% ADR';
+                                const isExhausted = pct >= 75.0;
+                                pctTextEl.style.color = isExhausted ? '#fbbf24' : '#38bdf8';
+                                pctTextEl.style.textShadow = isExhausted ? '0 0 10px rgba(251, 191, 36, 0.6)' : '';
+                            }
+                            
+                            if (barFillEl) {
+                                barFillEl.style.width = cappedPct + '%';
+                                const isExhausted = pct >= 75.0;
+                                if (isExhausted) {
+                                    barFillEl.style.animation = 'gold-pulse 1.5s infinite';
+                                    barFillEl.style.background = 'linear-gradient(90deg, #fbbf24, #f59e0b)';
+                                    barFillEl.style.boxShadow = 'none';
+                                } else {
+                                    barFillEl.style.animation = 'none';
+                                    barFillEl.style.background = 'linear-gradient(90deg, #0284c7, #38bdf8)';
+                                    barFillEl.style.boxShadow = '0 0 8px rgba(56, 189, 248, 0.4)';
+                                }
+                            }
+                        }
+                    } catch (err) {
+                        console.error("Error in updatePnlTick for " + t.symbol + ":", err);
+                    }
+                });
+            }).catch(err => console.error("Error fetching LTP tick:", err));
+        }
+        setInterval(updatePnlTick, 500);
+        updatePnlTick();
 
         // ── Dedicated orders loop: 5s (orders rarely change intraday) ─────────
         setInterval(fetchKiteOrders, 5000);

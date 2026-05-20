@@ -25,18 +25,80 @@ FYERS_LOG_15M = config.FYERS_LOG_15M
 data_store = {}
 store_lock = threading.Lock()
 
+# Dynamic subscription state
+subscribed_symbols = set()
+subscription_lock = threading.Lock()
+fyers_ws = None
+
 def get_symbols():
+    symbols = []
+    # 1. Base watchlist
     if os.path.exists(WATCHLIST_FILE):
         try:
             with open(WATCHLIST_FILE, "r") as f:
                 loaded = json.load(f)
                 if isinstance(loaded, list):
-                    return loaded
+                    symbols.extend(loaded)
                 elif isinstance(loaded, dict):
-                    return loaded.get("buy", []) + loaded.get("sell", [])
+                    symbols.extend(loaded.get("buy", []) + loaded.get("sell", []))
         except Exception as e:
             print(f"Error loading watchlist in fyers logger: {e}")
-    return []
+            
+    # 2. Radar watchlist
+    if os.path.exists(config.RADAR_WATCHLIST_FILE):
+        try:
+            with open(config.RADAR_WATCHLIST_FILE, "r") as f:
+                loaded = json.load(f)
+                for item in loaded:
+                    sym = item.get("symbol")
+                    if sym and sym not in symbols:
+                        symbols.append(sym)
+        except Exception:
+            pass
+
+    # 3. Active trades (format from HDFCLIFE to NSE:HDFCLIFE-EQ)
+    if os.path.exists(config.ACTIVE_TRADES_FILE):
+        try:
+            with open(config.ACTIVE_TRADES_FILE, "r") as f:
+                loaded = json.load(f)
+                for sym in loaded.keys():
+                    full_sym = f"NSE:{sym}-EQ"
+                    if full_sym not in symbols:
+                        symbols.append(full_sym)
+        except Exception:
+            pass
+
+    return symbols
+
+def dynamic_subscription_loop():
+    """Checks for new symbols in watchlist/radar/active trades and subscribes dynamically."""
+    print("🔄 Dynamic Subscription Loop Started...")
+    while True:
+        try:
+            if fyers_ws is None:
+                time.sleep(1)
+                continue
+                
+            current_targets = get_symbols()
+            new_to_subscribe = []
+            
+            with subscription_lock:
+                for sym in current_targets:
+                    if sym not in subscribed_symbols:
+                        new_to_subscribe.append(sym)
+                        
+            if new_to_subscribe:
+                print(f"📡 Dynamic subscribing to new symbols: {new_to_subscribe}")
+                try:
+                    fyers_ws.subscribe(symbols=new_to_subscribe, data_type="SymbolUpdate")
+                    fyers_ws.subscribe(symbols=new_to_subscribe, data_type="DepthUpdate")
+                    with subscription_lock:
+                        subscribed_symbols.update(new_to_subscribe)
+                except Exception as ws_err:
+                    print(f"⚠️ Dynamic subscription failed: {ws_err}")
+        except Exception as e:
+            print(f"⚠️ Error in dynamic subscription loop: {e}")
+        time.sleep(5)  # Check every 5 seconds
 
 def get_access_token():
     if os.path.exists(TOKEN_FILE):
@@ -174,7 +236,7 @@ def onclose(message):
     print(f"🔌 WebSocket Closed: {message}")
 
 def onopen():
-    print("🌐 WebSocket Connection Established. Subscribing...")
+    print("🌐 WebSocket Connection Established. Subscribing initial batch...")
     symbols = get_symbols()
     
     # Subscribe to BOTH Depth and Full Symbol Data
@@ -183,7 +245,11 @@ def onopen():
     # 2. Depth Data (for Buy/Sell Quantities)
     fyers_ws.subscribe(symbols=symbols, data_type="DepthUpdate")
     
-    print(f"✅ Subscribed to {len(symbols)} symbols for Depth + Price.")
+    with subscription_lock:
+        subscribed_symbols.clear()
+        subscribed_symbols.update(symbols)
+        
+    print(f"✅ Initial subscription complete for {len(symbols)} symbols.")
     fyers_ws.keep_running()
 
 if __name__ == "__main__":
@@ -209,6 +275,9 @@ if __name__ == "__main__":
 
     # Start the background CSV logger
     threading.Thread(target=log_to_csv, daemon=True).start()
+
+    # Start the dynamic subscription loop
+    threading.Thread(target=dynamic_subscription_loop, daemon=True).start()
 
     # Connect to the stream
     fyers_ws.connect()

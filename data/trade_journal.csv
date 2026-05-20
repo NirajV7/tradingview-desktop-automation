@@ -1,0 +1,2 @@
+timestamp,symbol,direction,quantity,entry_price,exit_price,gross_pnl,brokerage,stt,gst,stamp_duty,exchange_charge,sebi_fee,total_charges,net_pnl,exit_reason,entry_order_id,exit_order_id
+2026-05-20 12:11:01,HDFCLIFE,BUY,25,609.5,606.0,-87.5,0.0,30.39,0.17,2.0,0.0,0.0,33.52,-121.02,STOP LOSS HIT,,

@@ -86,6 +86,9 @@ class KiteExecutionEngine:
         self.risk_per_trade = 100.0  # Scaled down for live safety testing (₹)
         self.max_active_trades = 3    # Limit correlation risk
         
+        self.trade_attempts = {}      # {symbol: {"attempts": int, "last_exit_time": datetime}}
+        self.completed_trades_today = set()
+        
         # Stateful File Pointers for ultra-fast incremental reading
         self.file_pointers = {
             config.FYERS_LOG: 0,
@@ -99,6 +102,65 @@ class KiteExecutionEngine:
             config.FYERS_LOG_15M: [],
             config.FYERS_INDICATORS_5M: []
         }
+        
+        self.initialize_engine()
+
+    def register_trade_exit(self, symbol):
+        """Registers a completed trade exit to trigger cooldown and increment attempts."""
+        sym = symbol.replace("NSE:", "").replace("-EQ", "").upper()
+        now = datetime.now()
+        
+        if sym not in self.trade_attempts:
+            self.trade_attempts[sym] = {"attempts": 0, "last_exit_time": None}
+            
+        self.trade_attempts[sym]["attempts"] += 1
+        self.trade_attempts[sym]["last_exit_time"] = now
+        
+        # Keep fallback completed_trades_today for backward compatibility
+        self.completed_trades_today.add(sym)
+        
+        print(f"⏱️ [COOLDOWN] Registered exit for {sym}. Total attempts today: {self.trade_attempts[sym]['attempts']}/2. Cooldown active for 30 minutes.")
+
+    def is_cooldown_active(self, symbol):
+        """Checks if a symbol is in cooldown or has exhausted its daily entry attempts."""
+        sym = symbol.replace("NSE:", "").replace("-EQ", "").upper()
+        if sym not in self.trade_attempts:
+            return False
+            
+        stats = self.trade_attempts[sym]
+        if stats["attempts"] >= 2:
+            return True
+            
+        if stats["last_exit_time"]:
+            elapsed = (datetime.now() - stats["last_exit_time"]).total_seconds()
+            if elapsed < 1800:  # 30 minutes in seconds
+                return True
+                
+        return False
+
+    def initialize_engine(self):
+        """Runs the one-time startup checks, authenticates with Kite, and syncs initial state."""
+        print(f"============================================================")
+        print(f"⚡ ZERODHA KITE EXECUTION ENGINE INITIALIZED")
+        print(f"🛡️ RISK PARAMETER: ₹{self.risk_per_trade} Per Trade (MIS Mode Only)")
+        print(f"🔧 MODE: {'[LIVE EXECUTION MODE]' if not self.dry_run else '[DRY RUN / SIMULATION MODE]'}")
+        print(f"============================================================")
+        
+        if not self.dry_run:
+            self.init_kite_client()
+            self.sync_broker_state()
+        else:
+            self.completed_trades_today = set()
+
+    def persist_active_trades(self):
+        """Writes active_trades to disk so the dashboard can read real target/SL values."""
+        try:
+            path = os.path.join("data", "active_trades.json")
+            os.makedirs("data", exist_ok=True)
+            with open(path, "w") as f:
+                json.dump(self.active_trades, f, indent=2)
+        except Exception as e:
+            print(f"⚠️ Failed to persist active_trades: {e}")
 
     def sync_logs_to_memory(self):
         """Ultra-fast incremental memory load. Reads only new lines from the hard drive."""
@@ -121,34 +183,38 @@ class KiteExecutionEngine:
                     # Memory cap to prevent RAM bloating
                     if len(self.memory_logs[file_path]) > 25000:
                         self.memory_logs[file_path] = self.memory_logs[file_path][-25000:]
-        
-        print(f"============================================================")
-        print(f"⚡ ZERODHA KITE EXECUTION ENGINE INITIALIZED")
-        print(f"🛡️ RISK PARAMETER: ₹{self.risk_per_trade} Per Trade (MIS Mode Only)")
-        print(f"🔧 MODE: {'[DRY RUN / SIMULATION MODE]' if self.dry_run else '[LIVE EXECUTION MODE]'}")
-        print(f"============================================================")
-        
-        if not self.dry_run:
-            self.init_kite_client()
-            self.sync_broker_state()
-        else:
-            self.completed_trades_today = set()
 
     def sync_broker_state(self):
         """Syncs the engine state with the live Kite broker to recover from restarts."""
         print("🔄 Syncing state with Zerodha Kite...")
+        
+        # Load previously persisted active_trades for target restoration
+        persisted_trades = {}
+        try:
+            persist_path = os.path.join("data", "active_trades.json")
+            if os.path.exists(persist_path):
+                with open(persist_path, "r") as f:
+                    persisted_trades = json.load(f)
+        except Exception:
+            pass
+        
         try:
             # 1. Fetch Today's Orders for Cooldown
             orders = self.kite.orders()
             self.completed_trades_today = set()
+            self.trade_attempts = {}
             pending_sl_orders = {}
             
+            order_counts = {}
             for order in orders:
                 sym = order.get("tradingsymbol")
                 status = order.get("status")
                 order_type = order.get("order_type")
                 
-                # If there's a complete or rejected order, mark as interacted today
+                # Count filled orders to reconstruct attempts
+                if status == "COMPLETE":
+                    order_counts[sym] = order_counts.get(sym, 0) + 1
+                    
                 if status in ["COMPLETE", "REJECTED"]:
                     self.completed_trades_today.add(sym)
                     
@@ -159,6 +225,16 @@ class KiteExecutionEngine:
                         "sl_price": float(order.get("trigger_price", 0))
                     }
                     
+            for sym, count in order_counts.items():
+                attempts = count // 2
+                if attempts > 0:
+                    self.trade_attempts[sym] = {
+                        "attempts": attempts,
+                        "last_exit_time": datetime.now()  # Assume cooldown is active from restart
+                    }
+                    if attempts >= 2:
+                        self.completed_trades_today.add(sym)
+                        
             # 2. Fetch Active Positions to Reconstruct Memory
             positions = self.kite.positions()
             net_positions = positions.get("net", [])
@@ -173,24 +249,34 @@ class KiteExecutionEngine:
                     avg_price = float(pos.get("average_price", 0))
                     direction = "BUY" if qty > 0 else "SELL"
                     
-                    # Remove from completed if we currently hold it (it's active, not completed)
+                    # Remove from completed/cooldown if we currently hold it (it's active, not completed)
                     if sym in self.completed_trades_today:
                         self.completed_trades_today.remove(sym)
-                        
+                    if sym in self.trade_attempts:
+                        self.trade_attempts[sym]["attempts"] = max(0, self.trade_attempts[sym]["attempts"] - 1)
+                        self.trade_attempts[sym]["last_exit_time"] = None
+                    
+                    # Restore target from persisted state if available
+                    persisted = persisted_trades.get(sym, {})
+                    restored_target = persisted.get("target")
+                    
                     # Reconstruct active_trades
                     self.active_trades[sym] = {
                         "entry": avg_price,
                         "qty": abs(qty),
                         "direction": direction,
                         "sl": pending_sl_orders.get(sym, {}).get("sl_price", 0.0),
-                        "sl_id": pending_sl_orders.get(sym, {}).get("sl_id", None)
+                        "sl_id": pending_sl_orders.get(sym, {}).get("sl_id", None),
+                        "target": restored_target
                     }
-                    print(f"✅ Recovered Active Trade: {direction} {abs(qty)} {sym} @ ₹{avg_price} (SL: ₹{self.active_trades[sym]['sl']})")
+                    target_display = f"₹{restored_target}" if restored_target else "unknown"
+                    print(f"✅ Recovered Active Trade: {direction} {abs(qty)} {sym} @ ₹{avg_price} (SL: ₹{self.active_trades[sym]['sl']}, Target: {target_display})")
                     
-            print(f"✅ Broker Sync Complete. Found {len(self.active_trades)} active trades. {len(self.completed_trades_today)} symbols in cooldown.")
+            print(f"✅ Broker Sync Complete. Found {len(self.active_trades)} active trades. {len(self.trade_attempts)} symbols recorded in attempt logs.")
         except Exception as e:
             print(f"❌ Failed to sync broker state: {e}")
             self.completed_trades_today = set()
+            self.trade_attempts = {}
 
     def init_kite_client(self):
         """Initializes the official KiteConnect client using cached daily session token or environment fallback."""
@@ -326,6 +412,7 @@ class KiteExecutionEngine:
                     
                     # 1. Audit active trades for trailing stop updates and profit booking
                     self.audit_active_trades()
+                    self.persist_active_trades()
 
                     # 2. Scan watchlist for new entry triggers
                     watchlist = self.load_watchlist()
@@ -334,8 +421,8 @@ class KiteExecutionEngine:
                             if symbol in self.active_trades:
                                 continue
                                 
-                            # COOLDOWN GUARD: Prevent re-entering a stock that was already traded today
-                            if hasattr(self, 'completed_trades_today') and symbol in self.completed_trades_today:
+                            # COOLDOWN GUARD: Prevent re-entering a stock if cooldown is active
+                            if self.is_cooldown_active(symbol):
                                 continue
                             
                             direction = self.get_symbol_direction(symbol)
@@ -361,14 +448,19 @@ class KiteExecutionEngine:
                         
                         for item in radar_wl:
                             symbol = item["symbol"]
+                            ticker = symbol.replace("NSE:", "").replace("-EQ", "").upper()
                             
                             # If already active, remove from watchlist
-                            if symbol in self.active_trades:
+                            if ticker in self.active_trades or symbol in self.active_trades:
                                 radar_to_remove.append(item)
                                 continue
                                 
                             # If daily loss limit hit or max radar trades hit, do not evaluate trigger
                             if is_radar_disabled or radar_active_count >= 2:
+                                continue
+                                
+                            # If cooldown is active, skip trigger evaluation
+                            if self.is_cooldown_active(ticker) or self.is_cooldown_active(symbol):
                                 continue
                                 
                             status = self.evaluate_pullback_rules(item)

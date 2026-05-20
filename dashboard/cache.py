@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from threading import Lock
 from fyers_apiv3 import fyersModel
 import config
+import kite_auth_manager
 from dashboard.utils import load_watchlist
 from indicator_engine import compute_indicators, calculate_adr_percentage, calculate_adr_absolute
 
@@ -110,6 +111,30 @@ def get_last_closed_candle(indicators, timeframe_minutes):
         return indicators[-2]
     return last_candle
 
+def _save_orb_range_to_shared_file(symbol: str, high: float, low: float):
+    """Saves the 9:15-9:30 range to a shared JSON file so the execution engine can read it instantly."""
+    path = os.path.join("data", "orb_ranges.json")
+    data = {}
+    if os.path.exists(path):
+        try:
+            with open(path, "r") as f:
+                data = json.load(f)
+        except Exception:
+            pass
+    # Normalize key (e.g. "NSE:TMCV-EQ" -> "TMCV")
+    ticker = symbol.split(":")[-1].replace("-EQ", "").upper()
+    data[ticker] = {
+        "high": float(high),
+        "low": float(low),
+        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as f:
+            json.dump(data, f, indent=4)
+    except Exception as e:
+        print(f"[CACHE ERROR] Failed to write orb_ranges.json: {e}")
+
 async def fyers_cache_updater():
     while True:
         try:
@@ -123,7 +148,28 @@ async def fyers_cache_updater():
                     pass
             radar_symbols = [item.get("symbol") for item in radar_watchlist if item.get("symbol")]
             
-            active_symbols = list(set(watchlist.get("buy", []) + watchlist.get("sell", []) + radar_symbols))
+            active_trades = {}
+            if os.path.exists(config.ACTIVE_TRADES_FILE):
+                try:
+                    with open(config.ACTIVE_TRADES_FILE, "r") as f:
+                        active_trades = json.load(f)
+                except Exception:
+                    pass
+            active_trade_symbols = [f"NSE:{sym}-EQ" for sym in active_trades.keys()]
+            
+            # Fetch current active positions from Kite to ensure their history is cached
+            active_kite_symbols = []
+            try:
+                positions = kite_auth_manager.get_kite_positions()
+                for p in positions:
+                    if p.get("quantity", 0) != 0:
+                        sym = p.get("symbol")
+                        if sym:
+                            active_kite_symbols.append(f"NSE:{sym}-EQ")
+            except Exception as e:
+                print(f"[CACHE ERROR] Failed to fetch Kite positions for cache updater: {e}")
+
+            active_symbols = list(set(watchlist.get("buy", []) + watchlist.get("sell", []) + radar_symbols + active_trade_symbols + active_kite_symbols))
             if not active_symbols:
                 await asyncio.sleep(5)
                 continue
@@ -228,6 +274,14 @@ async def fyers_cache_updater():
                         candles = res.get("candles", [])
                         if candles:
                             indicators = compute_indicators(candles)
+                            
+                            # Extract ORB Range from 09:15:00 candle
+                            orb_timestamp = f"{today_str} 09:15:00"
+                            for item in indicators:
+                                if item["timestamp"] == orb_timestamp:
+                                    _save_orb_range_to_shared_file(symbol, item["high"], item["low"])
+                                    break
+                                    
                             for item in indicators:
                                 item["adr"] = adr_val
                                 item["adr_abs"] = adr_abs_val
