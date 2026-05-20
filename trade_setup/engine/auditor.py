@@ -51,48 +51,7 @@ def audit_active_trades(self):
         if now_time >= datetime.strptime("15:15:00", "%H:%M:%S").time():
             print(f"\n🚨 >>> 3:15 PM MANDATORY SQUARE-OFF FOR {symbol} <<< 🚨")
             print(f"💰 Current Time: {now_time.strftime('%H:%M:%S')} >= 15:15:00. Booking position of {qty} shares.")
-            
-            exit_tx = self.kite.TRANSACTION_TYPE_BUY if direction == "SELL" else self.kite.TRANSACTION_TYPE_SELL
-            if self.dry_run:
-                print(f"   [Simulation Log] Position squared off at Market Price: ₹{current_price:.2f}")
-                self.log_trade_to_journal(symbol, entry, current_price, qty, direction=direction, exit_reason="3:15 PM MANDATORY SQUARE-OFF")
-                self.register_trade_exit(symbol)
-                del self.active_trades[symbol]
-            else:
-                try:
-                    sl_order_id = trade.get("sl_id")
-                    if sl_order_id:
-                        print(f"🧹 Canceling pending SL order {sl_order_id}...")
-                        try:
-                            self.kite.cancel_order(
-                                variety=self.kite.VARIETY_REGULAR,
-                                order_id=sl_order_id
-                            )
-                        except Exception as ex:
-                            print(f"⚠️ Failed to cancel pending SL order {sl_order_id}: {ex}")
-                    
-                    print(f"🛒 Placing Market Exit Order for 3:15 PM Square-off...")
-                    exit_order_id = self.kite.place_order(
-                        variety=self.kite.VARIETY_REGULAR,
-                        exchange=self.kite.EXCHANGE_NSE,
-                        tradingsymbol=symbol,
-                        transaction_type=exit_tx,
-                        quantity=qty,
-                        product=self.kite.PRODUCT_MIS,
-                        order_type=self.kite.ORDER_TYPE_MARKET
-                    )
-                    print(f"✅ Squared Off successfully! Order ID: {exit_order_id}")
-                    self.log_trade_to_journal(symbol, entry, current_price, qty, direction=direction, exit_reason="3:15 PM MANDATORY SQUARE-OFF", exit_order_id=exit_order_id)
-                    self.register_trade_exit(symbol)
-                    self.square_off_failures.pop(symbol, None)
-                    del self.active_trades[symbol]
-                except Exception as e:
-                    print(f"❌ Failed to square off trade on Zerodha: {e}")
-                    self.square_off_failures[symbol] = self.square_off_failures.get(symbol, 0) + 1
-                    if self.square_off_failures[symbol] >= 3:
-                        print(f"🚨 ORPHAN PURGED: {symbol} removed after {self.square_off_failures[symbol]} consecutive square-off failures. Manual check required!")
-                        self.square_off_failures.pop(symbol, None)
-                        del self.active_trades[symbol]
+            self.modify_sl_to_marketable_limit_exit(symbol, current_price, "3:15 PM MANDATORY SQUARE-OFF")
             continue
 
         is_radar = (trade.get("strategy") == "RADAR")
@@ -106,24 +65,16 @@ def audit_active_trades(self):
                 if current_price >= sl:
                     print(f"\n💥 >>> RADAR SHORT STOP LOSS HIT FOR {symbol} <<< 💥")
                     print(f"📈 Price: ₹{current_price:.2f} >= Stop Loss: ₹{sl:.2f}")
-                    if self.dry_run:
-                        self.log_trade_to_journal(symbol, entry, sl, qty, direction="SELL", exit_reason="STOP LOSS HIT (RADAR)")
-                        self.register_trade_exit(symbol)
-                        del self.active_trades[symbol]
-                    else:
-                        self.square_off_radar_position(symbol, qty, "BUY", sl, "STOP LOSS HIT (RADAR)")
+                    self.log_trade_to_journal(symbol, entry, sl, qty, direction="SELL", exit_reason="STOP LOSS HIT (RADAR)")
+                    self.register_trade_exit(symbol)
+                    del self.active_trades[symbol]
                     continue
 
                 # Rule 2: Static Target Achieved Guard (Short Target is below entry)
                 if current_price <= target:
                     print(f"\n🎉 >>> RADAR SHORT TARGET ACHIEVED FOR {symbol} <<< 🎉")
                     print(f"💰 Price: ₹{current_price:.2f} <= Target: ₹{target:.2f}")
-                    if self.dry_run:
-                        self.log_trade_to_journal(symbol, entry, current_price, qty, direction="SELL", exit_reason="TARGET ACHIEVED (RADAR)")
-                        self.register_trade_exit(symbol)
-                        del self.active_trades[symbol]
-                    else:
-                        self.square_off_radar_position(symbol, qty, "BUY", current_price, "TARGET ACHIEVED (RADAR)")
+                    self.modify_sl_to_marketable_limit_exit(symbol, current_price, "TARGET ACHIEVED (RADAR)")
                     continue
 
                 # Rule 3: 70% ADR Exhaustion Lock -> Trail Stop Loss to break-even (cost)
@@ -158,15 +109,7 @@ def audit_active_trades(self):
                 if current_price <= trigger_75_adr:
                     print(f"\n🎉 >>> RADAR 75% ADR EXHAUSTION WINNER FOR {symbol} <<< 🎉")
                     print(f"💰 Price: ₹{current_price:.2f} <= 75% ADR Trigger: ₹{trigger_75_adr:.2f} (Open: ₹{daily_open:.2f} - 75% of ADR: ₹{adr_abs:.2f})")
-                    print(f"🚀 Booking 100% position profit of {qty} shares!")
-
-                    if self.dry_run:
-                        print(f"   [Simulation Log] Position squared off at Market Price: ₹{current_price:.2f}")
-                        self.log_trade_to_journal(symbol, entry, current_price, qty, direction="SELL", exit_reason="ADR TARGET REACHED (RADAR)")
-                        self.register_trade_exit(symbol)
-                        del self.active_trades[symbol]
-                    else:
-                        self.square_off_radar_position(symbol, qty, "BUY", current_price, "ADR TARGET REACHED (RADAR)")
+                    self.modify_sl_to_marketable_limit_exit(symbol, current_price, "ADR TARGET REACHED (RADAR)")
                     continue
 
             else: # direction == "BUY"
@@ -176,25 +119,17 @@ def audit_active_trades(self):
                 # Rule 1: Stop Loss Hit Guard (Long SL is below entry)
                 if current_price <= sl:
                     print(f"\n💥 >>> RADAR LONG STOP LOSS HIT FOR {symbol} <<< 💥")
-                    print(f"📉 Price: ₹{current_price:.2f} <= Stop Loss: ₹{sl:.2f}")
-                    if self.dry_run:
-                        self.log_trade_to_journal(symbol, entry, sl, qty, direction="BUY", exit_reason="STOP LOSS HIT (RADAR)")
-                        self.register_trade_exit(symbol)
-                        del self.active_trades[symbol]
-                    else:
-                        self.square_off_radar_position(symbol, qty, "SELL", sl, "STOP LOSS HIT (RADAR)")
+                    print(f"📈 Price: ₹{current_price:.2f} <= Stop Loss: ₹{sl:.2f}")
+                    self.log_trade_to_journal(symbol, entry, sl, qty, direction="BUY", exit_reason="STOP LOSS HIT (RADAR)")
+                    self.register_trade_exit(symbol)
+                    del self.active_trades[symbol]
                     continue
 
                 # Rule 2: Static Target Achieved Guard (Long Target is above entry)
                 if current_price >= target:
                     print(f"\n🎉 >>> RADAR LONG TARGET ACHIEVED FOR {symbol} <<< 🎉")
                     print(f"💰 Price: ₹{current_price:.2f} >= Target: ₹{target:.2f}")
-                    if self.dry_run:
-                        self.log_trade_to_journal(symbol, entry, current_price, qty, direction="BUY", exit_reason="TARGET ACHIEVED (RADAR)")
-                        self.register_trade_exit(symbol)
-                        del self.active_trades[symbol]
-                    else:
-                        self.square_off_radar_position(symbol, qty, "SELL", current_price, "TARGET ACHIEVED (RADAR)")
+                    self.modify_sl_to_marketable_limit_exit(symbol, current_price, "TARGET ACHIEVED (RADAR)")
                     continue
 
                 # Rule 3: 70% ADR Exhaustion Lock -> Trail Stop Loss to break-even (cost)
@@ -229,15 +164,7 @@ def audit_active_trades(self):
                 if current_price >= trigger_75_adr:
                     print(f"\n🎉 >>> RADAR 75% ADR EXHAUSTION WINNER FOR {symbol} <<< 🎉")
                     print(f"💰 Price: ₹{current_price:.2f} >= 75% ADR Trigger: ₹{trigger_75_adr:.2f} (Open: ₹{daily_open:.2f} + 75% of ADR: ₹{adr_abs:.2f})")
-                    print(f"🚀 Booking 100% position profit of {qty} shares!")
-
-                    if self.dry_run:
-                        print(f"   [Simulation Log] Position squared off at Market Price: ₹{current_price:.2f}")
-                        self.log_trade_to_journal(symbol, entry, current_price, qty, direction="BUY", exit_reason="ADR TARGET REACHED (RADAR)")
-                        self.register_trade_exit(symbol)
-                        del self.active_trades[symbol]
-                    else:
-                        self.square_off_radar_position(symbol, qty, "SELL", current_price, "ADR TARGET REACHED (RADAR)")
+                    self.modify_sl_to_marketable_limit_exit(symbol, current_price, "ADR TARGET REACHED (RADAR)")
                     continue
             continue
 
@@ -289,47 +216,7 @@ def audit_active_trades(self):
             if current_price <= trigger_75_adr:
                 print(f"\n🎉 >>> 75% ADR EXHAUSTION WINNER FOR {symbol} <<< 🎉")
                 print(f"💰 Price: ₹{current_price:.2f} <= 75% ADR Trigger: ₹{trigger_75_adr:.2f} (Open: ₹{daily_open:.2f} - 75% of ADR: ₹{adr_abs:.2f})")
-                print(f"🚀 Booking 100% position profit of {qty} shares!")
-
-                if self.dry_run:
-                    print(f"   [Simulation Log] Position squared off at Market Price: ₹{current_price:.2f}")
-                    self.log_trade_to_journal(symbol, entry, current_price, qty, direction="SELL", exit_reason="ADR TARGET REACHED")
-                    del self.active_trades[symbol]
-                else:
-                    try:
-                        sl_order_id = trade.get("sl_id")
-                        if sl_order_id:
-                            print(f"🧹 Canceling pending SL order {sl_order_id}...")
-                            try:
-                                self.kite.cancel_order(
-                                    variety=self.kite.VARIETY_REGULAR,
-                                    order_id=sl_order_id
-                                )
-                            except Exception as ex:
-                                print(f"⚠️ Failed to cancel pending SL order {sl_order_id}: {ex}")
-                        
-                        print(f"🛒 Placing Market Exit Order to Book Profit...")
-                        exit_order_id = self.kite.place_order(
-                            variety=self.kite.VARIETY_REGULAR,
-                            exchange=self.kite.EXCHANGE_NSE,
-                            tradingsymbol=symbol,
-                            transaction_type=self.kite.TRANSACTION_TYPE_BUY,
-                            quantity=qty,
-                            product=self.kite.PRODUCT_MIS,
-                            order_type=self.kite.ORDER_TYPE_MARKET
-                        )
-                        print(f"✅ Squared Off successfully! Order ID: {exit_order_id}")
-                        self.log_trade_to_journal(symbol, entry, current_price, qty, direction="SELL", exit_reason="ADR TARGET REACHED", exit_order_id=exit_order_id)
-                        self.register_trade_exit(symbol)
-                        self.square_off_failures.pop(symbol, None)
-                        del self.active_trades[symbol]
-                    except Exception as e:
-                        print(f"❌ Failed to square off trade on Zerodha: {e}")
-                        self.square_off_failures[symbol] = self.square_off_failures.get(symbol, 0) + 1
-                        if self.square_off_failures[symbol] >= 3:
-                            print(f"🚨 ORPHAN PURGED: {symbol} removed after {self.square_off_failures[symbol]} consecutive square-off failures. Manual check required!")
-                            self.square_off_failures.pop(symbol, None)
-                            del self.active_trades[symbol]
+                self.modify_sl_to_marketable_limit_exit(symbol, current_price, "ADR TARGET REACHED")
 
         else:
             # ORIGINAL BUY AUDITING CODE PATH UNTOUCHED
@@ -380,47 +267,7 @@ def audit_active_trades(self):
             if current_price >= trigger_75_adr:
                 print(f"\n🎉 >>> 75% ADR EXHAUSTION WINNER FOR {symbol} <<< 🎉")
                 print(f"💰 Price: ₹{current_price:.2f} >= 75% ADR Trigger: ₹{trigger_75_adr:.2f} (Open: ₹{daily_open:.2f} + 75% of ADR: ₹{adr_abs:.2f})")
-                print(f"🚀 Booking 100% position profit of {qty} shares!")
-
-                if self.dry_run:
-                    print(f"   [Simulation Log] Position squared off at Market Price: ₹{current_price:.2f}")
-                    self.log_trade_to_journal(symbol, entry, current_price, qty, direction="BUY", exit_reason="ADR TARGET REACHED")
-                    del self.active_trades[symbol]
-                else:
-                    try:
-                        sl_order_id = trade.get("sl_id")
-                        if sl_order_id:
-                            print(f"🧹 Canceling pending SL order {sl_order_id}...")
-                            try:
-                                self.kite.cancel_order(
-                                    variety=self.kite.VARIETY_REGULAR,
-                                    order_id=sl_order_id
-                                )
-                            except Exception as ex:
-                                print(f"⚠️ Failed to cancel pending SL order {sl_order_id}: {ex}")
-                        
-                        print(f"🛒 Placing Market Exit Order to Book Profit...")
-                        exit_order_id = self.kite.place_order(
-                            variety=self.kite.VARIETY_REGULAR,
-                            exchange=self.kite.EXCHANGE_NSE,
-                            tradingsymbol=symbol,
-                            transaction_type=self.kite.TRANSACTION_TYPE_SELL,
-                            quantity=qty,
-                            product=self.kite.PRODUCT_MIS,
-                            order_type=self.kite.ORDER_TYPE_MARKET
-                        )
-                        print(f"✅ Squared Off successfully! Order ID: {exit_order_id}")
-                        self.log_trade_to_journal(symbol, entry, current_price, qty, direction="BUY", exit_reason="ADR TARGET REACHED", exit_order_id=exit_order_id)
-                        self.register_trade_exit(symbol)
-                        self.square_off_failures.pop(symbol, None)
-                        del self.active_trades[symbol]
-                    except Exception as e:
-                        print(f"❌ Failed to square off trade on Zerodha: {e}")
-                        self.square_off_failures[symbol] = self.square_off_failures.get(symbol, 0) + 1
-                        if self.square_off_failures[symbol] >= 3:
-                            print(f"🚨 ORPHAN PURGED: {symbol} removed after {self.square_off_failures[symbol]} consecutive square-off failures. Manual check required!")
-                            self.square_off_failures.pop(symbol, None)
-                            del self.active_trades[symbol]
+                self.modify_sl_to_marketable_limit_exit(symbol, current_price, "ADR TARGET REACHED")
 
 def square_off_radar_position(self, symbol, qty, exit_direction, exit_price, reason):
     try:
@@ -465,4 +312,100 @@ def square_off_radar_position(self, symbol, qty, exit_direction, exit_price, rea
         del self.active_trades[symbol]
     except Exception as e:
         print(f"❌ Failed to square off Radar trade: {e}")
+
+
+def modify_sl_to_marketable_limit_exit(self, symbol, current_price, reason):
+    """
+    Safely exits an active position by modifying the pending Stop Loss order to a marketable LIMIT order.
+    If the Stop Loss was already triggered, it catches the exception and records the stop fill,
+    preventing duplicate execution race conditions.
+    """
+    try:
+        from trade_setup.engine.orders import round_to_tick
+    except ImportError:
+        from orders import round_to_tick
+
+    trade = self.active_trades.get(symbol)
+    if not trade:
+        return
+
+    entry = float(trade["entry"])
+    qty = int(trade["qty"])
+    direction = trade.get("direction", "BUY")
+    sl_order_id = trade.get("sl_id")
+
+    if self.dry_run:
+        print(f"   [Simulation Log] Safe OCO Exit ({reason}) at Market Price: ₹{current_price:.2f}")
+        self.log_trade_to_journal(symbol, entry, current_price, qty, direction=direction, exit_reason=reason)
+        self.register_trade_exit(symbol)
+        del self.active_trades[symbol]
+        return
+
+    # Calculate marketable limit price with 0.5% protective buffer
+    exit_direction = "SELL" if direction == "BUY" else "BUY"
+    if exit_direction == "SELL":
+        marketable_price = round_to_tick(current_price * 0.995)
+    else:
+        marketable_price = round_to_tick(current_price * 1.005)
+
+    executed_success = False
+    exit_order_id = None
+    final_exit_price = current_price
+
+    if sl_order_id:
+        print(f"🔄 [OCO EXIT] Modifying pending SL order {sl_order_id} to marketable LIMIT exit at ₹{marketable_price:.2f} (Current: ₹{current_price:.2f})...")
+        try:
+            self.kite.modify_order(
+                variety=self.kite.VARIETY_REGULAR,
+                order_id=sl_order_id,
+                order_type=self.kite.ORDER_TYPE_LIMIT,
+                price=marketable_price,
+                trigger_price=0.0
+            )
+            print(f"✅ [OCO EXIT] SL order modified to marketable LIMIT successfully. Position squared off!")
+            executed_success = True
+            exit_order_id = sl_order_id
+            final_exit_price = marketable_price
+        except Exception as modify_err:
+            err_msg = str(modify_err).lower()
+            # If order is already completed/filled or cancelled, treat as SL hit or manual exit
+            if "complete" in err_msg or "filled" in err_msg or "status" in err_msg:
+                print(f"⚠️ [OCO EXIT] SL modification failed because order {sl_order_id} is already filled/complete. Treating as STOP LOSS HIT.")
+                self.log_trade_to_journal(symbol, entry, float(trade["sl"]), qty, direction=direction, exit_reason="STOP LOSS HIT", exit_order_id=sl_order_id)
+                self.register_trade_exit(symbol)
+                self.square_off_failures.pop(symbol, None)
+                del self.active_trades[symbol]
+                return
+            else:
+                print(f"⚠️ [OCO EXIT] SL modification failed: {modify_err}. Falling back to placing new marketable limit order.")
+
+    if not executed_success:
+        print(f"🛒 [OCO EXIT] Placing fallback marketable LIMIT exit order...")
+        try:
+            exit_order_id = self.kite.place_order(
+                variety=self.kite.VARIETY_REGULAR,
+                exchange=self.kite.EXCHANGE_NSE,
+                tradingsymbol=symbol,
+                transaction_type=exit_direction,
+                quantity=qty,
+                product=self.kite.PRODUCT_MIS,
+                order_type=self.kite.ORDER_TYPE_LIMIT,
+                price=marketable_price
+            )
+            print(f"✅ [OCO EXIT] Fallback marketable LIMIT order placed. Order ID: {exit_order_id}")
+            final_exit_price = marketable_price
+        except Exception as place_err:
+            print(f"❌ [OCO EXIT] Critical: Fallback marketable exit failed: {place_err}")
+            self.square_off_failures[symbol] = self.square_off_failures.get(symbol, 0) + 1
+            if self.square_off_failures[symbol] >= 3:
+                print(f"🚨 ORPHAN PURGED: {symbol} removed after {self.square_off_failures[symbol]} consecutive square-off failures. Manual check required!")
+                self.square_off_failures.pop(symbol, None)
+                del self.active_trades[symbol]
+            return
+
+    # Success path for live orders
+    self.log_trade_to_journal(symbol, entry, final_exit_price, qty, direction=direction, exit_reason=reason, exit_order_id=exit_order_id)
+    self.register_trade_exit(symbol)
+    self.square_off_failures.pop(symbol, None)
+    del self.active_trades[symbol]
 

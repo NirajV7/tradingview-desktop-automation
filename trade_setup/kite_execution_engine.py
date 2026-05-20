@@ -52,7 +52,7 @@ from trade_setup.engine.risk import (
     execute_radar_sell_disciplines
 )
 from trade_setup.engine.orders import place_kite_bracket_defense, place_kite_sell_bracket_defense
-from trade_setup.engine.auditor import audit_active_trades, square_off_radar_position
+from trade_setup.engine.auditor import audit_active_trades, square_off_radar_position, modify_sl_to_marketable_limit_exit
 from trade_setup.engine.rules_pullback import evaluate_pullback_rules
 
 class KiteExecutionEngine:
@@ -73,6 +73,7 @@ class KiteExecutionEngine:
     place_kite_sell_bracket_defense = place_kite_sell_bracket_defense
     audit_active_trades = audit_active_trades
     square_off_radar_position = square_off_radar_position
+    modify_sl_to_marketable_limit_exit = modify_sl_to_marketable_limit_exit
     evaluate_pullback_rules = evaluate_pullback_rules
     check_radar_daily_loss_limit = check_radar_daily_loss_limit
     execute_radar_buy_disciplines = execute_radar_buy_disciplines
