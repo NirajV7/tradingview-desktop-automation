@@ -682,10 +682,216 @@
             });
         }
 
+        // ── Diagnostics Board State ──
+        let diagSelectedSymbol = null;
+        let diagLastData = null;
+
+        function updateDiagnosticsBoard() {
+            fetch('/api/engine/diagnostics').then(r => r.json()).then(data => {
+                diagLastData = data;
+                const board = document.getElementById('diag-board');
+                if (!board) return;
+
+                // Engine status pill
+                const statusPill = document.getElementById('diag-engine-status');
+                if (statusPill) {
+                    if (data.status === 'active') {
+                        statusPill.innerHTML = `<span style="color: #3fb950;">● ENGINE ${data.mode || 'ACTIVE'}</span>`;
+                    } else {
+                        statusPill.innerHTML = '<span style="color: #f85149;">● ENGINE OFFLINE</span>';
+                    }
+                }
+
+                // Risk summary
+                const riskPill = document.getElementById('diag-risk-summary');
+                if (riskPill && data.status === 'active') {
+                    const pnl = data.realized_pnl || 0;
+                    const max = data.max_daily_loss || 500;
+                    const pnlColor = pnl >= 0 ? '#3fb950' : '#f85149';
+                    const pnlSign = pnl >= 0 ? '+' : '';
+                    riskPill.innerHTML = `<span style="color: ${pnlColor};">${pnlSign}₹${pnl.toFixed(0)}</span> / <span style="color: #8b949e;">₹${max}</span>`;
+                }
+
+                if (data.status !== 'active') {
+                    document.getElementById('diag-symbol-list').innerHTML = '<div style="padding: 20px; color: #8b949e; text-align: center; font-style: italic;">Engine not running</div>';
+                    document.getElementById('diag-detail-panel').innerHTML = '<div style="padding: 30px; color: #8b949e; text-align: center; font-style: italic;">Start the Kite Intraday Engine to see live diagnostics</div>';
+                    return;
+                }
+
+                // Build symbol list
+                const allSymbols = [];
+                (data.watchlist_candidates || []).forEach(c => {
+                    allSymbols.push({ symbol: c.symbol, type: c.status === 'IN_TRADE' ? 'IN TRADE' : (c.status === 'COOLDOWN' ? 'COOLDOWN' : (c.direction === 'BUY' ? 'ORB LONG' : 'ORB SHORT')), source: 'watchlist', data: c });
+                });
+                (data.active_positions || []).forEach(p => {
+                    if (!allSymbols.find(s => s.symbol === p.symbol)) {
+                        allSymbols.push({ symbol: p.symbol, type: `IN TRADE (${p.strategy})`, source: 'active', data: p });
+                    } else {
+                        const existing = allSymbols.find(s => s.symbol === p.symbol);
+                        existing.activeData = p;
+                    }
+                });
+                (data.radar_candidates || []).forEach(r => {
+                    allSymbols.push({ symbol: r.symbol, type: `RADAR ${r.direction}`, source: 'radar', data: r });
+                });
+
+                // Auto-select first symbol if none selected
+                if (!diagSelectedSymbol && allSymbols.length > 0) diagSelectedSymbol = allSymbols[0].symbol;
+
+                let listHtml = '';
+                allSymbols.forEach(s => {
+                    const isSelected = s.symbol === diagSelectedSymbol;
+                    const typeColor = s.type.includes('LONG') || s.type.includes('BUY') ? '#3fb950' : s.type.includes('SHORT') || s.type.includes('SELL') ? '#f85149' : s.type.includes('TRADE') ? '#58a6ff' : s.type.includes('COOLDOWN') ? '#d29922' : '#a371f7';
+                    const bgColor = isSelected ? 'rgba(255,255,255,0.08)' : 'transparent';
+                    const borderLeft = isSelected ? `3px solid ${typeColor}` : '3px solid transparent';
+                    listHtml += `<div onclick="diagSelectSymbol('${s.symbol}')" style="padding: 10px 12px; cursor: pointer; background: ${bgColor}; border-left: ${borderLeft}; transition: all 0.15s ease; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.04);" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='${bgColor}'">`;
+                    listHtml += `<span style="font-family: 'JetBrains Mono', monospace; font-size: 0.85em; font-weight: 600; color: #c9d1d9;">${s.symbol}</span>`;
+                    listHtml += `<span style="font-size: 0.68em; padding: 2px 6px; border-radius: 4px; font-weight: 600; background: ${typeColor}15; color: ${typeColor}; border: 1px solid ${typeColor}30;">${s.type}</span>`;
+                    listHtml += '</div>';
+                });
+                document.getElementById('diag-symbol-list').innerHTML = listHtml || '<div style="padding: 20px; color: #8b949e; text-align: center;">No symbols on watchlist</div>';
+
+                // Render detail panel for selected symbol
+                renderDiagDetail(allSymbols);
+            }).catch(() => {});
+        }
+
+        function diagSelectSymbol(sym) {
+            diagSelectedSymbol = sym;
+            if (diagLastData && diagLastData.status === 'active') {
+                const allSymbols = [];
+                (diagLastData.watchlist_candidates || []).forEach(c => {
+                    allSymbols.push({ symbol: c.symbol, type: c.status === 'IN_TRADE' ? 'IN TRADE' : (c.direction === 'BUY' ? 'ORB LONG' : 'ORB SHORT'), source: 'watchlist', data: c });
+                });
+                (diagLastData.active_positions || []).forEach(p => {
+                    if (!allSymbols.find(s => s.symbol === p.symbol)) {
+                        allSymbols.push({ symbol: p.symbol, type: `IN TRADE (${p.strategy})`, source: 'active', data: p });
+                    } else {
+                        const existing = allSymbols.find(s => s.symbol === p.symbol);
+                        existing.activeData = p;
+                    }
+                });
+                (diagLastData.radar_candidates || []).forEach(r => {
+                    allSymbols.push({ symbol: r.symbol, type: `RADAR ${r.direction}`, source: 'radar', data: r });
+                });
+                // Re-render symbol list to update selection highlight
+                let listHtml = '';
+                allSymbols.forEach(s => {
+                    const isSelected = s.symbol === diagSelectedSymbol;
+                    const typeColor = s.type.includes('LONG') || s.type.includes('BUY') ? '#3fb950' : s.type.includes('SHORT') || s.type.includes('SELL') ? '#f85149' : s.type.includes('TRADE') ? '#58a6ff' : s.type.includes('COOLDOWN') ? '#d29922' : '#a371f7';
+                    const bgColor = isSelected ? 'rgba(255,255,255,0.08)' : 'transparent';
+                    const borderLeft = isSelected ? `3px solid ${typeColor}` : '3px solid transparent';
+                    listHtml += `<div onclick="diagSelectSymbol('${s.symbol}')" style="padding: 10px 12px; cursor: pointer; background: ${bgColor}; border-left: ${borderLeft}; transition: all 0.15s ease; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid rgba(255,255,255,0.04);" onmouseover="this.style.background='rgba(255,255,255,0.05)'" onmouseout="this.style.background='${bgColor}'">`;
+                    listHtml += `<span style="font-family: 'JetBrains Mono', monospace; font-size: 0.85em; font-weight: 600; color: #c9d1d9;">${s.symbol}</span>`;
+                    listHtml += `<span style="font-size: 0.68em; padding: 2px 6px; border-radius: 4px; font-weight: 600; background: ${typeColor}15; color: ${typeColor}; border: 1px solid ${typeColor}30;">${s.type}</span>`;
+                    listHtml += '</div>';
+                });
+                document.getElementById('diag-symbol-list').innerHTML = listHtml;
+                renderDiagDetail(allSymbols);
+            }
+        }
+
+        function renderDiagDetail(allSymbols) {
+            const panel = document.getElementById('diag-detail-panel');
+            if (!panel) return;
+            const selected = allSymbols.find(s => s.symbol === diagSelectedSymbol);
+            if (!selected) {
+                panel.innerHTML = '<div style="padding: 30px; color: #8b949e; text-align: center;">Select a symbol</div>';
+                return;
+            }
+
+            let html = '';
+            // Header
+            const hdrColor = selected.type.includes('LONG') || selected.type.includes('BUY') ? '#3fb950' : selected.type.includes('SHORT') || selected.type.includes('SELL') ? '#f85149' : '#58a6ff';
+            html += `<div style="padding: 14px 16px; border-bottom: 1px solid rgba(255,255,255,0.08); display: flex; justify-content: space-between; align-items: center;">`;
+            html += `<div><span style="font-size: 1.1em; font-weight: 700; color: #e6edf3; font-family: 'JetBrains Mono', monospace;">${selected.symbol}</span>`;
+            html += `<span style="margin-left: 10px; font-size: 0.72em; padding: 3px 8px; border-radius: 4px; font-weight: 700; background: ${hdrColor}15; color: ${hdrColor}; border: 1px solid ${hdrColor}30;">${selected.type}</span></div>`;
+            if (selected.data && selected.data.price) {
+                html += `<span style="font-family: 'JetBrains Mono', monospace; font-size: 0.95em; color: #c9d1d9;">₹${Number(selected.data.price).toFixed(2)}</span>`;
+            }
+            html += '</div>';
+
+            // If active trade, show position metrics + exit rules
+            const activeData = selected.activeData || (selected.source === 'active' ? selected.data : null);
+            if (activeData) {
+                html += '<div style="padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.06);">';
+                html += '<div style="font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.05em; color: #8b949e; margin-bottom: 8px; font-weight: 600;">Position Metrics</div>';
+                html += '<div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">';
+                const entry = activeData.entry ? Number(activeData.entry).toFixed(2) : '—';
+                const target = activeData.target ? Number(activeData.target).toFixed(2) : '—';
+                const sl = activeData.stop_loss ? Number(activeData.stop_loss).toFixed(2) : '—';
+                const ltp = activeData.ltp ? Number(activeData.ltp).toFixed(2) : '—';
+                const pnlPct = activeData.pnl_pct !== undefined ? activeData.pnl_pct : null;
+                const pnlColor = pnlPct !== null ? (pnlPct >= 0 ? '#3fb950' : '#f85149') : '#8b949e';
+                const pnlStr = pnlPct !== null ? `${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(2)}%` : '—';
+                html += `<div style="text-align: center;"><div style="font-size: 0.7em; color: #8b949e;">Entry</div><div style="font-family: 'JetBrains Mono', monospace; font-size: 0.9em; color: #c9d1d9;">₹${entry}</div></div>`;
+                html += `<div style="text-align: center;"><div style="font-size: 0.7em; color: #8b949e;">LTP</div><div style="font-family: 'JetBrains Mono', monospace; font-size: 0.9em; color: #c9d1d9;">₹${ltp}</div></div>`;
+                html += `<div style="text-align: center;"><div style="font-size: 0.7em; color: #8b949e;">PnL</div><div style="font-family: 'JetBrains Mono', monospace; font-size: 0.9em; color: ${pnlColor}; font-weight: 700;">${pnlStr}</div></div>`;
+                html += `<div style="text-align: center;"><div style="font-size: 0.7em; color: #3fb950;">Target</div><div style="font-family: 'JetBrains Mono', monospace; font-size: 0.9em; color: #3fb950;">₹${target}</div></div>`;
+                html += `<div style="text-align: center;"><div style="font-size: 0.7em; color: #f85149;">Stop Loss</div><div style="font-family: 'JetBrains Mono', monospace; font-size: 0.9em; color: #f85149;">₹${sl}</div></div>`;
+                html += `<div style="text-align: center;"><div style="font-size: 0.7em; color: #8b949e;">Qty</div><div style="font-family: 'JetBrains Mono', monospace; font-size: 0.9em; color: #c9d1d9;">${activeData.qty || '—'}</div></div>`;
+                html += '</div></div>';
+
+                // Exit rules
+                if (activeData.rules && activeData.rules.length > 0) {
+                    html += '<div style="padding: 12px 16px;">';
+                    html += '<div style="font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.05em; color: #8b949e; margin-bottom: 8px; font-weight: 600;">Exit Criteria</div>';
+                    activeData.rules.forEach(r => {
+                        html += renderRuleRow(r);
+                    });
+                    html += '</div>';
+                }
+            }
+            // If radar candidate, show state info
+            else if (selected.source === 'radar') {
+                const rd = selected.data;
+                html += '<div style="padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.06);">';
+                html += '<div style="font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.05em; color: #8b949e; margin-bottom: 8px; font-weight: 600;">Radar Pullback State</div>';
+                const stateColor = rd.state === 'IN_PULLBACK' ? '#3fb950' : '#d29922';
+                html += `<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">`;
+                html += `<div><span style="font-size: 0.7em; color: #8b949e;">State:</span> <span style="color: ${stateColor}; font-weight: 600; font-size: 0.85em;">${rd.state}</span></div>`;
+                html += `<div><span style="font-size: 0.7em; color: #8b949e;">Spike Price:</span> <span style="font-family: 'JetBrains Mono', monospace; font-size: 0.85em; color: #c9d1d9;">₹${rd.spike_price || '—'}</span></div>`;
+                if (rd.pullback_low) html += `<div><span style="font-size: 0.7em; color: #8b949e;">Pullback Low:</span> <span style="font-family: 'JetBrains Mono', monospace; font-size: 0.85em; color: #f85149;">₹${Number(rd.pullback_low).toFixed(2)}</span></div>`;
+                if (rd.pullback_high) html += `<div><span style="font-size: 0.7em; color: #8b949e;">Pullback High:</span> <span style="font-family: 'JetBrains Mono', monospace; font-size: 0.85em; color: #3fb950;">₹${Number(rd.pullback_high).toFixed(2)}</span></div>`;
+                html += '</div></div>';
+            }
+
+            // Entry rules checklist (for watchlist candidates)
+            const rules = selected.data && selected.data.rules ? selected.data.rules : [];
+            if (rules.length > 0 && selected.source === 'watchlist' && !activeData) {
+                html += '<div style="padding: 12px 16px;">';
+                html += '<div style="font-size: 0.75em; text-transform: uppercase; letter-spacing: 0.05em; color: #8b949e; margin-bottom: 8px; font-weight: 600;">Entry Rule Checklist</div>';
+                rules.forEach(r => {
+                    html += renderRuleRow(r);
+                });
+                // Progress bar: how many rules passed
+                const passed = rules.filter(r => r.pass).length;
+                const total = rules.length;
+                const pct = total > 0 ? (passed / total * 100) : 0;
+                const barColor = pct >= 100 ? '#3fb950' : pct >= 60 ? '#d29922' : '#f85149';
+                html += `<div style="margin-top: 12px; background: rgba(255,255,255,0.05); border-radius: 6px; overflow: hidden; height: 6px;">`;
+                html += `<div style="width: ${pct}%; height: 100%; background: ${barColor}; border-radius: 6px; transition: width 0.3s ease;"></div></div>`;
+                html += `<div style="text-align: right; margin-top: 4px; font-size: 0.72em; color: ${barColor}; font-weight: 600;">${passed}/${total} gates passed</div>`;
+                html += '</div>';
+            }
+
+            panel.innerHTML = html || '<div style="padding: 30px; color: #8b949e; text-align: center;">No rule data available</div>';
+        }
+
+        function renderRuleRow(r) {
+            const icon = r.pass ? '✅' : '❌';
+            const nameColor = r.pass ? '#3fb950' : '#f85149';
+            let row = `<div style="display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.03);">`;
+            row += `<span style="font-size: 0.85em; flex-shrink: 0; width: 18px;">${icon}</span>`;
+            row += `<div style="flex: 1; min-width: 0;"><div style="font-size: 0.82em; font-weight: 600; color: ${nameColor};">${r.name}</div>`;
+            row += `<div style="font-size: 0.72em; color: #8b949e; font-family: 'JetBrains Mono', monospace; word-break: break-all;">${r.detail || ''}</div></div></div>`;
+            return row;
+        }
+
+        setInterval(updateDiagnosticsBoard, 2500);
+        updateDiagnosticsBoard();
+
         setInterval(function(){
-            fetch('/api/data').then(r => r.json()).then(d => {
-                document.getElementById('signal-rows').innerHTML = d.html;
-            });
             
             updateStatus();
 
@@ -1042,66 +1248,25 @@
         <!-- Main Column -->
         <section class="main-col">
             <!-- Signal Grid Card -->
-            <div class="card glassmorphism signal-card">
-                <div class="card-header">
+            <div class="card glassmorphism signal-card" id="diag-board">
+                <div class="card-header" style="border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
                     <div class="header-title">
-                        <span class="icon">📊</span>
-                        <h3>Live Signal Grid <span class="badge" style="background: rgba(63, 185, 80, 0.15); color: #3fb950; border: 1px solid rgba(63, 185, 80, 0.3); font-size: 0.75em; padding: 2px 6px; border-radius: 6px; margin-left: 8px;">FYERS ENGINE</span></h3>
+                        <span class="icon">🔬</span>
+                        <h3>Rule Checklist & Diagnostics</h3>
                     </div>
-                    <span class="pulse-indicator">● LIVE FEED</span>
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <span id="diag-risk-summary" style="font-family: 'JetBrains Mono', monospace; font-size: 0.8em; padding: 4px 10px; background: rgba(255,255,255,0.05); border-radius: 6px; border: 1px solid rgba(255,255,255,0.08);">—</span>
+                        <span id="diag-engine-status" style="font-size: 0.82em; font-weight: 600;"><span style="color: #8b949e;">● CHECKING...</span></span>
+                    </div>
                 </div>
-                <div class="table-container">
-                    <table class="watchlist-table">
-                        <thead>
-                            <tr>
-                                <th>Symbol</th>
-                                <th>Fyers Price</th>
-                                <th>5m Wave</th>
-                                <th>15m Tide</th>
-                                <th>Trend Signal</th>
-                            </tr>
-                        </thead>
-                        <tbody id="signal-rows">
-                            <tr>
-                                <td colspan="5" style="text-align:center; padding: 60px; color:#8b949e;">
-                                    <div class="loading-container">
-                                        <span class="loading-spinner"></span>
-                                        <p>[ WAITING FOR SYSTEM HEARTBEAT ]</p>
-                                    </div>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-                <!-- Sleek Trend Rules Legend -->
-                <div class="legend-box" style="margin-top: 20px; text-align: left; padding: 16px 20px; background: rgba(13, 17, 23, 0.6); border: 1px solid #30363d; border-radius: 12px; font-size: 0.82em; color: #8b949e; line-height: 1.5;">
-                    <div style="font-weight: 700; color: #c9d1d9; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; font-size: 0.95em;">
-                        🔍 Trend State Logic & Confirmation Rules
+                <div style="display: grid; grid-template-columns: 220px 1fr; min-height: 320px; max-height: 480px;">
+                    <!-- Symbol List -->
+                    <div id="diag-symbol-list" style="border-right: 1px solid rgba(255,255,255,0.06); overflow-y: auto; max-height: 460px;">
+                        <div style="padding: 20px; color: #8b949e; text-align: center; font-style: italic;">Loading...</div>
                     </div>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
-                        <div>
-                            <strong style="color: #3fb950; display: inline-flex; align-items: center; gap: 4px;">🟢 BULLISH SETUP (All 4 Met)</strong>
-                            <ul style="margin: 6px 0 0 12px; padding: 0; list-style-type: none;">
-                                <li>• Price &gt; VWAP <span style="font-size:0.85em; color:#58a6ff;">(Institutional baseline)</span></li>
-                                <li>• 20 EMA &gt; 50 EMA <span style="font-size:0.85em; color:#58a6ff;">(Bullish structure)</span></li>
-                                <li>• Price &gt; 200 EMA <span style="font-size:0.85em; color:#58a6ff;">(Macro anchor)</span></li>
-                                <li>• RSI &gt; 50 <span style="font-size:0.85em; color:#58a6ff;">(Buying momentum)</span></li>
-                                <li style="margin-top:4px;"><strong style="color: #d29922;">⚠️ OVERBOUGHT:</strong> Bullish met + RSI &gt; 70</li>
-                            </ul>
-                        </div>
-                        <div>
-                            <strong style="color: #f85149; display: inline-flex; align-items: center; gap: 4px;">🔴 BEARISH SETUP (All 4 Met)</strong>
-                            <ul style="margin: 6px 0 0 12px; padding: 0; list-style-type: none;">
-                                <li>• Price &lt; VWAP <span style="font-size:0.85em; color:#ff7b72;">(Institutional baseline)</span></li>
-                                <li>• 20 EMA &lt; 50 EMA <span style="font-size:0.85em; color:#ff7b72;">(Bearish structure)</span></li>
-                                <li>• Price &lt; 200 EMA <span style="font-size:0.85em; color:#ff7b72;">(Macro anchor)</span></li>
-                                <li>• RSI &lt; 50 <span style="font-size:0.85em; color:#ff7b72;">(Selling momentum)</span></li>
-                                <li style="margin-top:4px;"><strong style="color: #d29922;">⚠️ OVERSOLD:</strong> Bearish met + RSI &lt; 30</li>
-                            </ul>
-                        </div>
-                    </div>
-                    <div style="margin-top: 10px; border-top: 1px solid rgba(48, 54, 61, 0.5); padding-top: 10px;">
-                        <strong style="color: #8b949e;">🟡 CONGESTION:</strong> Indicators or timeframes are conflicting, representing a sideways or choppy structure.
+                    <!-- Detail Panel -->
+                    <div id="diag-detail-panel" style="overflow-y: auto; max-height: 460px;">
+                        <div style="padding: 30px; color: #8b949e; text-align: center; font-style: italic;">Select a symbol from the list</div>
                     </div>
                 </div>
             </div>

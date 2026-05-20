@@ -45,6 +45,7 @@ from trade_setup.engine.journal import log_trade_to_journal
 from trade_setup.engine.rules import evaluate_live_rules
 from trade_setup.engine.rules_sell import evaluate_live_sell_rules
 from trade_setup.engine.risk import (
+    get_today_realized_pnl,
     execute_order_disciplines,
     execute_sell_order_disciplines,
     check_radar_daily_loss_limit,
@@ -67,6 +68,7 @@ class KiteExecutionEngine:
     log_trade_to_journal = log_trade_to_journal
     evaluate_live_rules = evaluate_live_rules
     evaluate_live_sell_rules = evaluate_live_sell_rules
+    get_today_realized_pnl = get_today_realized_pnl
     execute_order_disciplines = execute_order_disciplines
     execute_sell_order_disciplines = execute_sell_order_disciplines
     place_kite_bracket_defense = place_kite_bracket_defense
@@ -92,6 +94,7 @@ class KiteExecutionEngine:
         self.square_off_failures = {}  # {symbol: int} — orphan cleanup counter
         self.max_daily_loss = 500.0    # ₹500 circuit breaker threshold
         self.circuit_breaker_active = False
+        self.diagnostics_cache = {}     # Exported to data/engine_state.json for dashboard
         
         # Stateful File Pointers for ultra-fast incremental reading
         self.file_pointers = {
@@ -491,6 +494,244 @@ class KiteExecutionEngine:
         except Exception as e:
             print(f"⚠️ Error saving radar watchlist: {e}")
 
+    def export_diagnostics_state(self):
+        """Exports current engine rule evaluation state to data/engine_state.json for the dashboard.
+        This is read-only telemetry — zero impact on execution paths."""
+        import tempfile
+        try:
+            now = datetime.now()
+            now_time = now.time()
+            today_str = now.strftime("%Y-%m-%d")
+            state = {
+                "timestamp": now.strftime("%Y-%m-%d %H:%M:%S"),
+                "mode": "LIVE" if not self.dry_run else "DRY_RUN",
+                "circuit_breaker_active": self.circuit_breaker_active,
+                "max_daily_loss": self.max_daily_loss,
+                "realized_pnl": 0.0,
+                "orb_active_count": len([s for s, t in self.active_trades.items() if t.get("strategy", "ORB") == "ORB"]),
+                "radar_active_count": len([s for s, t in self.active_trades.items() if t.get("strategy") == "RADAR"]),
+                "watchlist_candidates": [],
+                "active_positions": [],
+                "radar_candidates": []
+            }
+
+            # Realized P&L (safe — uses existing method)
+            try:
+                state["realized_pnl"] = round(self.get_today_realized_pnl(), 2)
+            except Exception:
+                pass
+
+            # ── Watchlist Candidate Diagnostics ──
+            watchlist = self.load_watchlist()
+            for symbol in (watchlist or []):
+                direction = self.get_symbol_direction(symbol)
+                diag = {
+                    "symbol": symbol,
+                    "direction": direction,
+                    "status": "IN_TRADE" if symbol in self.active_trades else "SCANNING",
+                    "rules": []
+                }
+
+                if symbol in self.active_trades:
+                    # Skip rule checks for active trades (they show in active_positions)
+                    state["watchlist_candidates"].append(diag)
+                    continue
+
+                # Cooldown check
+                cooldown = self.is_cooldown_active(symbol)
+                diag["rules"].append({"name": "Cooldown Clear", "pass": not cooldown,
+                    "detail": "In cooldown" if cooldown else "OK"})
+                if cooldown:
+                    diag["status"] = "COOLDOWN"
+                    state["watchlist_candidates"].append(diag)
+                    continue
+
+                # Time window
+                market_live = now_time >= datetime.strptime("09:30:00", "%H:%M:%S").time()
+                past_cutoff = now_time >= datetime.strptime("15:00:00", "%H:%M:%S").time()
+                time_ok = market_live and not past_cutoff
+                diag["rules"].append({"name": "Time Window (09:30-15:00)", "pass": time_ok,
+                    "detail": f"Current: {now_time.strftime('%H:%M:%S')}"})
+
+                # Active slots
+                orb_count = state["orb_active_count"]
+                slots_ok = orb_count < 3
+                diag["rules"].append({"name": "ORB Slot Available", "pass": slots_ok,
+                    "detail": f"Active: {orb_count}/3"})
+
+                # Circuit breaker
+                cb_ok = not self.circuit_breaker_active
+                diag["rules"].append({"name": "Circuit Breaker OK", "pass": cb_ok,
+                    "detail": f"Realized: ₹{state['realized_pnl']} / Max: ₹{self.max_daily_loss}"})
+
+                # Fetch latest indicators for this symbol
+                latest_row = None
+                for row in self.memory_logs.get(config.FYERS_INDICATORS_5M, []):
+                    if len(row) < 11 or not row[0].startswith(today_str):
+                        continue
+                    sym = row[1]
+                    row_ticker = sym.split(":")[1].split("-EQ")[0] if ":" in sym else sym
+                    if row_ticker == symbol or sym == symbol:
+                        latest_row = row
+
+                if latest_row:
+                    try:
+                        price = float(latest_row[2])
+                        vwap = float(latest_row[7])
+                        ema20 = float(latest_row[3])
+                        ema50 = float(latest_row[4])
+                        ema200 = float(latest_row[5])
+                        rsi = float(latest_row[6])
+
+                        diag["price"] = price
+
+                        if direction == "BUY":
+                            diag["rules"].append({"name": "VWAP Anchor", "pass": price > vwap,
+                                "detail": f"Price: ₹{price:.2f} / VWAP: ₹{vwap:.2f}"})
+                            diag["rules"].append({"name": "EMA Alignment", "pass": ema20 > ema50 and price > ema200,
+                                "detail": f"EMA20: {ema20:.2f} {'>' if ema20 > ema50 else '<='} EMA50: {ema50:.2f} | Price {'>' if price > ema200 else '<='} EMA200: {ema200:.2f}"})
+                            diag["rules"].append({"name": "RSI Momentum (50-70)", "pass": 50 <= rsi <= 70,
+                                "detail": f"RSI: {rsi:.1f}"})
+
+                            orb = self.orb_ranges.get(symbol)
+                            if orb:
+                                orb_high = orb["high"]
+                                breakout = price > orb_high
+                                pct_away = ((orb_high - price) / orb_high * 100) if not breakout else 0
+                                diag["rules"].append({"name": "Breakout Trigger", "pass": breakout,
+                                    "detail": f"Price: ₹{price:.2f} / ORB High: ₹{orb_high:.2f}" + (f" ({pct_away:.2f}% away)" if not breakout else "")})
+                            else:
+                                diag["rules"].append({"name": "ORB Range", "pass": False, "detail": "Not yet locked"})
+
+                        else:  # SELL
+                            diag["rules"].append({"name": "VWAP Anchor", "pass": price < vwap,
+                                "detail": f"Price: ₹{price:.2f} / VWAP: ₹{vwap:.2f}"})
+                            diag["rules"].append({"name": "EMA Alignment", "pass": ema20 < ema50 and price < ema200,
+                                "detail": f"EMA20: {ema20:.2f} {'<' if ema20 < ema50 else '>='} EMA50: {ema50:.2f} | Price {'<' if price < ema200 else '>='} EMA200: {ema200:.2f}"})
+                            diag["rules"].append({"name": "RSI Momentum (30-50)", "pass": 30 <= rsi <= 50,
+                                "detail": f"RSI: {rsi:.1f}"})
+
+                            orb = self.orb_ranges.get(symbol)
+                            if orb:
+                                orb_low = orb["low"]
+                                breakdown = price < orb_low
+                                pct_away = ((price - orb_low) / orb_low * 100) if not breakdown else 0
+                                diag["rules"].append({"name": "Breakdown Trigger", "pass": breakdown,
+                                    "detail": f"Price: ₹{price:.2f} / ORB Low: ₹{orb_low:.2f}" + (f" ({pct_away:.2f}% away)" if not breakdown else "")})
+                            else:
+                                diag["rules"].append({"name": "ORB Range", "pass": False, "detail": "Not yet locked"})
+
+                        # Tick Spread Skew
+                        buy_vol, sell_vol = self.get_tick_spread_volume(symbol)
+                        if direction == "BUY" and sell_vol > 0:
+                            ratio = buy_vol / sell_vol
+                            diag["rules"].append({"name": "Tick Spread Skew (≥1.15)", "pass": ratio >= 1.15,
+                                "detail": f"Buyer/Seller: {ratio:.2f}"})
+                        elif direction == "SELL" and buy_vol > 0:
+                            ratio = sell_vol / buy_vol
+                            diag["rules"].append({"name": "Tick Spread Skew (≥1.15)", "pass": ratio >= 1.15,
+                                "detail": f"Seller/Buyer: {ratio:.2f}"})
+
+                    except (ValueError, IndexError):
+                        pass
+                else:
+                    diag["rules"].append({"name": "Telemetry Data", "pass": False, "detail": "No indicator rows found"})
+
+                state["watchlist_candidates"].append(diag)
+
+            # ── Active Position Diagnostics ──
+            for symbol, trade in self.active_trades.items():
+                pos = {
+                    "symbol": symbol,
+                    "direction": trade.get("direction", "BUY"),
+                    "strategy": trade.get("strategy", "ORB"),
+                    "entry": trade.get("entry"),
+                    "qty": trade.get("qty"),
+                    "target": trade.get("target"),
+                    "stop_loss": trade.get("stop_loss"),
+                    "sl_trailed_to_be": trade.get("sl_trailed_to_be", False),
+                    "rules": []
+                }
+                entry = float(trade.get("entry", 0))
+                target = float(trade.get("target", 0))
+                sl = float(trade.get("stop_loss", 0))
+
+                # Fetch latest price
+                ltp = None
+                for row in self.memory_logs.get(config.FYERS_INDICATORS_5M, []):
+                    if len(row) < 11 or not row[0].startswith(today_str):
+                        continue
+                    sym = row[1]
+                    row_ticker = sym.split(":")[1].split("-EQ")[0] if ":" in sym else sym
+                    if row_ticker == symbol or sym == symbol:
+                        try:
+                            ltp = float(row[2])
+                        except (ValueError, IndexError):
+                            pass
+                pos["ltp"] = ltp
+
+                if ltp and entry > 0:
+                    dir_mult = 1 if pos["direction"] == "BUY" else -1
+                    pnl_pct = (ltp - entry) / entry * 100 * dir_mult
+                    pos["pnl_pct"] = round(pnl_pct, 2)
+
+                    # Target proximity
+                    if target > 0:
+                        tgt_dist = abs(target - ltp) / entry * 100
+                        pos["rules"].append({"name": "Target Hit", "pass": (ltp >= target if pos["direction"] == "BUY" else ltp <= target),
+                            "detail": f"LTP: ₹{ltp:.2f} / Target: ₹{target:.2f} ({tgt_dist:.1f}% away)"})
+
+                    # SL proximity
+                    if sl > 0:
+                        sl_dist = abs(ltp - sl) / entry * 100
+                        pos["rules"].append({"name": "Stop Loss Hit", "pass": False,
+                            "detail": f"LTP: ₹{ltp:.2f} / SL: ₹{sl:.2f} ({sl_dist:.1f}% away)"})
+
+                    # Break-even trail
+                    pos["rules"].append({"name": "SL Trailed to Break-Even", "pass": bool(trade.get("sl_trailed_to_be")),
+                        "detail": "70% ADR condition met" if trade.get("sl_trailed_to_be") else "Pending"})
+
+                    # EOD square-off
+                    eod_time = datetime.strptime("15:15:00", "%H:%M:%S").time()
+                    pos["rules"].append({"name": "EOD Square-Off", "pass": False,
+                        "detail": f"Trigger: 15:15 IST | Now: {now_time.strftime('%H:%M:%S')}"})
+
+                state["active_positions"].append(pos)
+
+            # ── Radar Candidate Diagnostics ──
+            radar_wl = self.load_radar_watchlist()
+            for item in (radar_wl or []):
+                sym = item.get("symbol", "")
+                base = sym.replace("NSE:", "").replace("-EQ", "").upper()
+                rd = {
+                    "symbol": base,
+                    "direction": item.get("direction", "BUY"),
+                    "state": item.get("state", "WAITING_FOR_PULLBACK"),
+                    "spike_price": item.get("spike_price"),
+                    "pullback_low": item.get("pullback_low"),
+                    "pullback_high": item.get("pullback_high"),
+                }
+                state["radar_candidates"].append(rd)
+
+            self.diagnostics_cache = state
+
+            # Atomic write using tempfile rename
+            out_path = os.path.join("data", "engine_state.json")
+            os.makedirs("data", exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(dir="data", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w") as tmp_f:
+                    json.dump(state, tmp_f)
+                os.replace(tmp_path, out_path)
+            except Exception:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+                raise
+
+        except Exception as e:
+            # Silent fail — diagnostics must never crash the engine
+            pass
+
     def run_polling_loop(self):
         """Active scanner that continuously audits watchlist symbols against filters."""
         print("\n📡 Start active scanning. Press Ctrl+C to terminate.")
@@ -569,6 +810,9 @@ class KiteExecutionEngine:
                         if radar_to_remove or radar_updated:
                             new_radar_wl = [x for x in radar_wl if x not in radar_to_remove]
                             self.save_radar_watchlist(new_radar_wl)
+
+                    # 4. Export diagnostics state for dashboard (silent, non-blocking)
+                    self.export_diagnostics_state()
                             
                 except Exception as e:
                     print(f"⚠️ Error inside polling loop iteration: {e}")

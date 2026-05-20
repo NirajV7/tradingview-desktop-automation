@@ -4,6 +4,7 @@ import os
 import json
 import csv
 import requests
+import time as _time
 from datetime import datetime
 
 import config
@@ -266,3 +267,23 @@ async def api_data():
         """
     
     return JSONResponse({"html": html or '<tr><td colspan="5" style="text-align:center; color:#8b949e;">[ NO DATA ]</td></tr>'})
+
+@router.get("/api/engine/diagnostics")
+async def engine_diagnostics():
+    """Returns the live engine rule evaluation state for the diagnostics board."""
+    state_path = os.path.join("data", "engine_state.json")
+    if not os.path.exists(state_path):
+        return JSONResponse({"status": "inactive", "reason": "Engine state file not found"})
+    
+    try:
+        # Freshness check: if file is older than 15 seconds, engine is likely stopped
+        file_age = _time.time() - os.path.getmtime(state_path)
+        if file_age > 15:
+            return JSONResponse({"status": "inactive", "reason": f"Engine state stale ({file_age:.0f}s old)"})
+        
+        with open(state_path, "r") as f:
+            state = json.load(f)
+        state["status"] = "active"
+        return JSONResponse(state)
+    except Exception as e:
+        return JSONResponse({"status": "error", "reason": str(e)})
