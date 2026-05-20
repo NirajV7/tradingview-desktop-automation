@@ -51,7 +51,7 @@ from trade_setup.engine.risk import (
     execute_radar_buy_disciplines,
     execute_radar_sell_disciplines
 )
-from trade_setup.engine.orders import place_kite_bracket_defense, place_kite_sell_bracket_defense
+from trade_setup.engine.orders import place_kite_bracket_defense, place_kite_sell_bracket_defense, round_to_tick
 from trade_setup.engine.auditor import audit_active_trades, square_off_radar_position, modify_sl_to_marketable_limit_exit
 from trade_setup.engine.rules_pullback import evaluate_pullback_rules
 
@@ -226,7 +226,9 @@ class KiteExecutionEngine:
                 if status == "TRIGGER PENDING" and order_type == "SL":
                     pending_sl_orders[sym] = {
                         "sl_id": order.get("order_id"),
-                        "sl_price": float(order.get("trigger_price", 0))
+                        "sl_price": float(order.get("trigger_price", 0.0)),
+                        "quantity": int(order.get("quantity", 0)),
+                        "transaction_type": order.get("transaction_type")
                     }
                     
             for sym, count in order_counts.items():
@@ -239,9 +241,11 @@ class KiteExecutionEngine:
                     if attempts >= 2:
                         self.completed_trades_today.add(sym)
                         
-            # 2. Fetch Active Positions to Reconstruct Memory
+            # 2. Fetch Active Positions to Reconstruct Memory and Reconcile
             positions = self.kite.positions()
             net_positions = positions.get("net", [])
+            
+            reconciled_symbols = set()
             
             for pos in net_positions:
                 sym = pos.get("tradingsymbol")
@@ -252,6 +256,8 @@ class KiteExecutionEngine:
                 if product == self.kite.PRODUCT_MIS and qty != 0:
                     avg_price = float(pos.get("average_price", 0))
                     direction = "BUY" if qty > 0 else "SELL"
+                    target_qty = abs(qty)
+                    exit_direction = "SELL" if direction == "BUY" else "BUY"
                     
                     # Remove from completed/cooldown if we currently hold it (it's active, not completed)
                     if sym in self.completed_trades_today:
@@ -260,23 +266,103 @@ class KiteExecutionEngine:
                         self.trade_attempts[sym]["attempts"] = max(0, self.trade_attempts[sym]["attempts"] - 1)
                         self.trade_attempts[sym]["last_exit_time"] = None
                     
-                    # Restore target from persisted state if available
+                    # Restore target and SL from persisted state if available
                     persisted = persisted_trades.get(sym, {})
                     restored_target = persisted.get("target")
+                    restored_sl = persisted.get("sl")
+                    
+                    sl_info = pending_sl_orders.get(sym)
+                    sl_id = None
+                    sl_price = 0.0
+                    
+                    if sl_info:
+                        sl_id = sl_info["sl_id"]
+                        sl_price = sl_info["sl_price"]
+                        sl_qty = sl_info["quantity"]
+                        sl_tx = sl_info["transaction_type"]
+                        
+                        # Reconcile quantity or transaction type mismatch
+                        if sl_qty != target_qty or sl_tx != exit_direction:
+                            if sl_tx != exit_direction:
+                                print(f"⚠️ [SELF-HEALING] Pending SL order {sl_id} direction {sl_tx} does not match exit direction {exit_direction}. Canceling...")
+                                try:
+                                    self.kite.cancel_order(variety=self.kite.VARIETY_REGULAR, order_id=sl_id)
+                                except Exception as cancel_err:
+                                    print(f"❌ [SELF-HEALING] Failed to cancel mismatched SL: {cancel_err}")
+                                sl_id = None
+                                sl_price = 0.0
+                            else:
+                                print(f"⚠️ [SELF-HEALING] Detected mismatched pending SL order {sl_id} quantity for {sym}. Order Qty: {sl_qty}, Position Qty: {target_qty}. Modifying...")
+                                try:
+                                    self.kite.modify_order(
+                                        variety=self.kite.VARIETY_REGULAR,
+                                        order_id=sl_id,
+                                        quantity=target_qty
+                                    )
+                                    print(f"✅ [SELF-HEALING] Successfully modified pending SL order {sl_id} quantity to {target_qty}!")
+                                except Exception as mod_err:
+                                    print(f"❌ [SELF-HEALING] Failed to modify pending SL order {sl_id}: {mod_err}")
+                                    
+                    if not sl_id:
+                        # Check Case A: Missing SL
+                        print(f"⚠️ [SELF-HEALING] Open position for {sym} has NO matching pending SL order! Restoring protection...")
+                        # 1. Attempt to find SL price from persisted trades
+                        if restored_sl and restored_sl > 0:
+                            sl_price = restored_sl
+                            print(f"👉 Found persisted SL price: ₹{sl_price:.2f}")
+                        else:
+                            # 2. Safety Fallback: Calculate 1% stop-loss
+                            if direction == "BUY":
+                                sl_price = round_to_tick(avg_price * 0.99)
+                            else:
+                                sl_price = round_to_tick(avg_price * 1.01)
+                            print(f"👉 Calculated safety fallback SL price (1.0% width): ₹{sl_price:.2f}")
+                            
+                        # Place new SL order
+                        try:
+                            sl_id = self.kite.place_order(
+                                variety=self.kite.VARIETY_REGULAR,
+                                exchange=self.kite.EXCHANGE_NSE,
+                                tradingsymbol=sym,
+                                transaction_type=exit_direction,
+                                quantity=target_qty,
+                                product=self.kite.PRODUCT_MIS,
+                                order_type=self.kite.ORDER_TYPE_SL,
+                                trigger_price=sl_price,
+                                price=sl_price
+                            )
+                            print(f"✅ [SELF-HEALING] Successfully placed missing SL order for {sym}. Order ID: {sl_id}")
+                        except Exception as place_err:
+                            print(f"❌ [SELF-HEALING] Failed to place safety SL order for {sym}: {place_err}")
                     
                     # Reconstruct active_trades
                     self.active_trades[sym] = {
                         "entry": avg_price,
-                        "qty": abs(qty),
+                        "qty": target_qty,
                         "direction": direction,
-                        "sl": pending_sl_orders.get(sym, {}).get("sl_price", 0.0),
-                        "sl_id": pending_sl_orders.get(sym, {}).get("sl_id", None),
+                        "sl": sl_price if sl_price > 0.0 else (restored_sl if restored_sl else 0.0),
+                        "sl_id": sl_id,
                         "target": restored_target
                     }
                     target_display = f"₹{restored_target}" if restored_target else "unknown"
-                    print(f"✅ Recovered Active Trade: {direction} {abs(qty)} {sym} @ ₹{avg_price} (SL: ₹{self.active_trades[sym]['sl']}, Target: {target_display})")
-                    
-            print(f"✅ Broker Sync Complete. Found {len(self.active_trades)} active trades. {len(self.trade_attempts)} symbols recorded in attempt logs.")
+                    print(f"✅ Recovered Active Trade: {direction} {target_qty} {sym} @ ₹{avg_price} (SL: ₹{self.active_trades[sym]['sl']}, Target: {target_display})")
+                    reconciled_symbols.add(sym)
+            
+            # Check Case B: Orphan Pending SL Orders
+            for sym, sl_info in pending_sl_orders.items():
+                if sym not in reconciled_symbols:
+                    sl_id = sl_info["sl_id"]
+                    print(f"⚠️ [SELF-HEALING] Detected orphan pending SL order {sl_id} for {sym} (no open MIS position). Canceling...")
+                    try:
+                        self.kite.cancel_order(
+                            variety=self.kite.VARIETY_REGULAR,
+                            order_id=sl_id
+                        )
+                        print(f"✅ [SELF-HEALING] Successfully cancelled orphan pending SL order {sl_id}!")
+                    except Exception as cancel_err:
+                        print(f"❌ [SELF-HEALING] Failed to cancel orphan pending SL order {sl_id}: {cancel_err}")
+                        
+            print(f"✅ Broker Sync & Self-Healing Complete. Found {len(self.active_trades)} active trades. {len(self.trade_attempts)} symbols recorded in attempt logs.")
         except Exception as e:
             print(f"❌ Failed to sync broker state: {e}")
             self.completed_trades_today = set()
