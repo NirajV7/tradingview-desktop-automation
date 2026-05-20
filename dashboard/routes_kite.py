@@ -336,14 +336,14 @@ def api_kite_positions():
         eff_target = target_price  # from Zerodha LIMIT order (if placed)
         if not eff_target and engine_target:
             eff_target = float(engine_target)
-        elif not eff_target and adr_abs_val:
+        elif not eff_target and adr_abs_val and qty != 0:
             eff_target = avg_price + (adr_abs_val * 1.5) if qty > 0 else avg_price - (adr_abs_val * 1.5)
 
         # Use engine's real SL if available, else fall back to ADR estimate
         eff_sl = sl_price  # from Zerodha SL order
         if not eff_sl and engine_sl:
             eff_sl = float(engine_sl)
-        elif not eff_sl and adr_abs_val:
+        elif not eff_sl and adr_abs_val and qty != 0:
             eff_sl = avg_price - adr_abs_val if qty > 0 else avg_price + adr_abs_val
             
         if target_price and sl_price:

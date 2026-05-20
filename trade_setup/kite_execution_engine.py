@@ -88,6 +88,9 @@ class KiteExecutionEngine:
         
         self.trade_attempts = {}      # {symbol: {"attempts": int, "last_exit_time": datetime}}
         self.completed_trades_today = set()
+        self.square_off_failures = {}  # {symbol: int} — orphan cleanup counter
+        self.max_daily_loss = 500.0    # ₹500 circuit breaker threshold
+        self.circuit_breaker_active = False
         
         # Stateful File Pointers for ultra-fast incremental reading
         self.file_pointers = {

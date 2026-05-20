@@ -237,7 +237,7 @@ def place_marketable_limit_exit(kite, exchange, symbol, tx_type, quantity, produ
 def modify_or_place_sl(symbol, new_trigger_price, sl_order_id=None, quantity=None, transaction_type=None, product=None):
     """
     Modify an existing SL order's trigger price, or place a new SL-M order if none exists.
-    trigger_price is rounded to ₹0.05 tick size.
+    trigger_price is rounded to the correct NSE tick size based on price level.
     """
     if not KITE_API_KEY or not os.path.exists(KITE_TOKEN_FILE):
         return {"status": "error", "message": "Kite not authenticated"}
@@ -252,8 +252,8 @@ def modify_or_place_sl(symbol, new_trigger_price, sl_order_id=None, quantity=Non
             kite = KiteConnect(api_key=KITE_API_KEY)
             kite.set_access_token(access_token)
             
-            # Round to ₹0.05 tick
-            rounded_price = round(round(new_trigger_price / 0.05) * 0.05, 2)
+            # Round to correct NSE tick size (dynamic based on price level)
+            rounded_price = round_to_tick(new_trigger_price)
             
             # User requested exact match for trigger price and limit price (zero buffer)
             limit_price = rounded_price

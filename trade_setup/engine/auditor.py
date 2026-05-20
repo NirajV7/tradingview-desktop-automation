@@ -84,9 +84,15 @@ def audit_active_trades(self):
                     print(f"✅ Squared Off successfully! Order ID: {exit_order_id}")
                     self.log_trade_to_journal(symbol, entry, current_price, qty, direction=direction, exit_reason="3:15 PM MANDATORY SQUARE-OFF", exit_order_id=exit_order_id)
                     self.register_trade_exit(symbol)
+                    self.square_off_failures.pop(symbol, None)
                     del self.active_trades[symbol]
                 except Exception as e:
                     print(f"❌ Failed to square off trade on Zerodha: {e}")
+                    self.square_off_failures[symbol] = self.square_off_failures.get(symbol, 0) + 1
+                    if self.square_off_failures[symbol] >= 3:
+                        print(f"🚨 ORPHAN PURGED: {symbol} removed after {self.square_off_failures[symbol]} consecutive square-off failures. Manual check required!")
+                        self.square_off_failures.pop(symbol, None)
+                        del self.active_trades[symbol]
             continue
 
         is_radar = (trade.get("strategy") == "RADAR")
@@ -315,9 +321,15 @@ def audit_active_trades(self):
                         print(f"✅ Squared Off successfully! Order ID: {exit_order_id}")
                         self.log_trade_to_journal(symbol, entry, current_price, qty, direction="SELL", exit_reason="ADR TARGET REACHED", exit_order_id=exit_order_id)
                         self.register_trade_exit(symbol)
+                        self.square_off_failures.pop(symbol, None)
                         del self.active_trades[symbol]
                     except Exception as e:
                         print(f"❌ Failed to square off trade on Zerodha: {e}")
+                        self.square_off_failures[symbol] = self.square_off_failures.get(symbol, 0) + 1
+                        if self.square_off_failures[symbol] >= 3:
+                            print(f"🚨 ORPHAN PURGED: {symbol} removed after {self.square_off_failures[symbol]} consecutive square-off failures. Manual check required!")
+                            self.square_off_failures.pop(symbol, None)
+                            del self.active_trades[symbol]
 
         else:
             # ORIGINAL BUY AUDITING CODE PATH UNTOUCHED
@@ -400,9 +412,15 @@ def audit_active_trades(self):
                         print(f"✅ Squared Off successfully! Order ID: {exit_order_id}")
                         self.log_trade_to_journal(symbol, entry, current_price, qty, direction="BUY", exit_reason="ADR TARGET REACHED", exit_order_id=exit_order_id)
                         self.register_trade_exit(symbol)
+                        self.square_off_failures.pop(symbol, None)
                         del self.active_trades[symbol]
                     except Exception as e:
                         print(f"❌ Failed to square off trade on Zerodha: {e}")
+                        self.square_off_failures[symbol] = self.square_off_failures.get(symbol, 0) + 1
+                        if self.square_off_failures[symbol] >= 3:
+                            print(f"🚨 ORPHAN PURGED: {symbol} removed after {self.square_off_failures[symbol]} consecutive square-off failures. Manual check required!")
+                            self.square_off_failures.pop(symbol, None)
+                            del self.active_trades[symbol]
 
 def square_off_radar_position(self, symbol, qty, exit_direction, exit_price, reason):
     try:

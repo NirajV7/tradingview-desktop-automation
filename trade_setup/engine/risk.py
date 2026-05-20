@@ -1,8 +1,48 @@
 from trade_setup.engine.orders import round_to_tick
+import csv
+import os
+from datetime import datetime
+import config
+
+def get_today_realized_pnl(self):
+    """Fetches today's realized P&L. Primary: Zerodha positions API. Fallback: CSV journal."""
+    # Primary: Broker source of truth
+    if not self.dry_run and self.kite:
+        try:
+            positions = self.kite.positions()
+            realized = sum(float(p.get("realised", 0)) for p in positions.get("net", []))
+            return realized
+        except Exception as e:
+            print(f"⚠️ Circuit breaker: Failed to fetch Kite positions: {e}")
+    
+    # Fallback: CSV journal for today
+    try:
+        csv_path = config.TRADE_JOURNAL_CSV
+        if not os.path.exists(csv_path):
+            return 0.0
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        total = 0.0
+        with open(csv_path, "r") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                if row.get("timestamp", "").startswith(today_str):
+                    total += float(row.get("net_pnl", 0))
+        return total
+    except Exception as e:
+        print(f"⚠️ Circuit breaker: Failed to read CSV journal: {e}")
+        return 0.0
 
 def execute_order_disciplines(self, symbol, price, stop_loss):
     """Calculates size, targets, and routes orders to Zerodha Kite."""
     if symbol in self.active_trades:
+        return
+
+    # Circuit Breaker: Check daily realized loss
+    realized = self.get_today_realized_pnl()
+    if realized <= -self.max_daily_loss:
+        if not self.circuit_breaker_active:
+            print(f"\n🚫 CIRCUIT BREAKER ACTIVATED: Daily realized loss ₹{abs(realized):.2f} exceeds limit ₹{self.max_daily_loss:.0f}. All new entries BLOCKED.")
+            self.circuit_breaker_active = True
         return
 
     orb_active_count = len([s for s, t in self.active_trades.items() if t.get("strategy", "ORB") == "ORB"])
@@ -88,6 +128,14 @@ def execute_order_disciplines(self, symbol, price, stop_loss):
 def execute_sell_order_disciplines(self, symbol, price, stop_loss):
     """Calculates size, targets, and routes sell/short orders to Zerodha Kite."""
     if symbol in self.active_trades:
+        return
+
+    # Circuit Breaker: Check daily realized loss
+    realized = self.get_today_realized_pnl()
+    if realized <= -self.max_daily_loss:
+        if not self.circuit_breaker_active:
+            print(f"\n🚫 CIRCUIT BREAKER ACTIVATED: Daily realized loss ₹{abs(realized):.2f} exceeds limit ₹{self.max_daily_loss:.0f}. All new entries BLOCKED.")
+            self.circuit_breaker_active = True
         return
 
     orb_active_count = len([s for s, t in self.active_trades.items() if t.get("strategy", "ORB") == "ORB"])
@@ -201,6 +249,14 @@ def execute_radar_buy_disciplines(self, symbol, price, pullback_low, orb_high):
     if symbol in self.active_trades:
         return
 
+    # Circuit Breaker: Check daily realized loss
+    realized = self.get_today_realized_pnl()
+    if realized <= -self.max_daily_loss:
+        if not self.circuit_breaker_active:
+            print(f"\n🚫 CIRCUIT BREAKER ACTIVATED: Daily realized loss ₹{abs(realized):.2f} exceeds limit ₹{self.max_daily_loss:.0f}. All new entries BLOCKED.")
+            self.circuit_breaker_active = True
+        return
+
     # Check daily loss guard
     if self.check_radar_daily_loss_limit():
         print(f"🛑 [RADAR GUARD] Execution Skipped for {symbol}: Radar Daily Max Loss limit reached today.")
@@ -289,6 +345,14 @@ def execute_radar_buy_disciplines(self, symbol, price, pullback_low, orb_high):
 def execute_radar_sell_disciplines(self, symbol, price, pullback_high, orb_low):
     """Calculates size, targets, and routes orders for Radar pullback sell (short) trades."""
     if symbol in self.active_trades:
+        return
+
+    # Circuit Breaker: Check daily realized loss
+    realized = self.get_today_realized_pnl()
+    if realized <= -self.max_daily_loss:
+        if not self.circuit_breaker_active:
+            print(f"\n🚫 CIRCUIT BREAKER ACTIVATED: Daily realized loss ₹{abs(realized):.2f} exceeds limit ₹{self.max_daily_loss:.0f}. All new entries BLOCKED.")
+            self.circuit_breaker_active = True
         return
 
     # Check daily loss guard
